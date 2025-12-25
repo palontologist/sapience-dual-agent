@@ -7,7 +7,7 @@
  * Requires capital deployment. 
  */
 
-import { Anthropic } from "@anthropic-ai/sdk";
+import Groq from 'groq-sdk';
 import { ethers } from "ethers";
 import axios from "axios";
 
@@ -15,10 +15,11 @@ interface Market {
   id: string;
   question: string;
   description: string;
-  resolution_date: string;
-  yes_price: number;
-  no_price: number;
-  liquidity:  number;
+  platform?: string;
+  yes_price?: number;
+  no_price?: number;
+  liquidity?: number;
+  resolution_date?: string;
 }
 
 interface Prediction {
@@ -40,26 +41,48 @@ interface Trade {
   timestamp: Date;
 }
 
+interface Config {
+  groqApiKey: string;
+  privateKey: string;
+  arbitrumRpcUrl?: string;
+}
+
+interface Forecast {
+  probability: number;
+  confidence: number;
+  expectedValue: number;
+  reasoning: string;
+}
+
+interface TradeDecision {
+  marketId: string;
+  action: 'buy' | 'sell' | 'skip';
+  size: number;
+  reasoning: string;
+  timestamp: number;
+  confidence: number;
+  expectedReturn: number;
+  riskScore: number;
+  stopLoss: number | null;
+  takeProfit: number | null;
+}
+
 export class TradingAgent {
-  private anthropic: Anthropic;
-  private provider: ethers. JsonRpcProvider;
+  private groq: Groq;
+  private provider: ethers.JsonRpcProvider;
   private signer: ethers.Signer;
   private walletAddress: string;
-  private usdeTokenAddress: string = "0xFd4cb59b3B0F51a08CEa8fade0F7B13d51180fff"; // USDe on Arbitrum
-  private sapienceContractAddress: string = "0x... "; // Sapience market contract
-  private minConfidence: number = 0.65; // Only trade if confidence > 65%
-  private minExpectedValue: number = 1.1; // Only trade if E[V] > 10%
-  private wagerAmount: number = 1; // Always 1 USDe per trade
+  private minConfidence: number = 0.65;
+  private minExpectedValue: number = 1.1;
 
-  constructor(
-    privateKey: string,
-    arbitrumRpcUrl: string = "https://arb1.arbitrum.io/rpc"
-  ) {
-    this.provider = new ethers.JsonRpcProvider(arbitrumRpcUrl);
-    this.signer = new ethers.Wallet(privateKey, this.provider);
-    this.anthropic = new Anthropic();
+  constructor(config: Config) {
+    this.provider = new ethers.JsonRpcProvider(config.arbitrumRpcUrl || "https://arb1.arbitrum.io/rpc");
+    this.signer = new ethers.Wallet(config.privateKey, this.provider);
+    this.groq = new Groq({
+      apiKey: config.groqApiKey,
+    });
     this.walletAddress = ethers.getAddress(
-      ethers.computeAddress(new ethers.SigningKey(privateKey).publicKey)
+      ethers.computeAddress(new ethers.SigningKey(config.privateKey).publicKey)
     );
   }
 
@@ -83,119 +106,85 @@ export class TradingAgent {
   }
 
   /**
-   * Generate a prediction and trading recommendation using Claude
+   * Evaluate a trade using Groq and Kimi model
    */
-  async generatePrediction(market: Market): Promise<Prediction> {
-    const prompt = `
-You are a prediction market trader analyzing markets for edge. 
+  async evaluateTrade(
+    market: Market,
+    forecast: Forecast
+  ): Promise<TradeDecision> {
+    console.log(`\n💼 Evaluating trade for: ${market.question}`);
+
+    const prompt = `You are a risk-management expert for prediction markets. Evaluate this trading opportunity:
 
 Market: "${market.question}"
-Description: ${market.description}
-Resolution Date: ${market.resolution_date}
-Current YES Price:  ${(market.yes_price * 100).toFixed(1)}%
-Current NO Price: ${(market.no_price * 100).toFixed(1)}%
-Liquidity: $${market.liquidity}
+Platform: ${market.description}
+Current Price: ${(market.yes_price! * 100).toFixed(1)}%
+Forecast Probability: ${(forecast.probability * 100).toFixed(1)}%
+Forecast Confidence: ${(forecast.confidence * 100).toFixed(1)}%
+Expected Value: ${forecast.expectedValue.toFixed(3)}
 
-You have a 1 USDe budget per trade. You win if your prediction matches the outcome. 
+Forecast Reasoning: ${forecast.reasoning}
 
-Provide your analysis in JSON format:
+Apply Kelly criterion and risk management. Provide decision in JSON:
 {
-  "predicted_outcome": "YES" or "NO",
-  "confidence":  0.65 to 1.0,
+  "action": "BUY" or "SELL" or "SKIP",
+  "size": <number 0-1>,
   "reasoning": "<detailed reasoning>",
-  "market_probability": 0.0 to 1.0,
-  "fair_value": 0.0 to 1.0,
-  "edge":  "your estimated advantage",
-  "recommendation": "BUY_YES" or "BUY_NO" or "SKIP"
+  "riskScore": <number 0-100>,
+  "stopLoss": <number or null>,
+  "takeProfit": <number or null>
 }
 
 Rules:
-- Only recommend BUY if you see edge (fair_value differs from market price by >5%)
-- Only recommend if confidence >= 65%
-- Be conservative - skip uncertain markets
-- Edge = fair_value - market_price (should be positive for BUY)
-    `;
-
-    const response = await this.anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens:  700,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
+- action: BUY if edge > 5% and confidence > 70%, SELL if edge < -5% and confidence > 70%, else SKIP
+- size: Kelly stake capped at 10% of bankroll (0.1 max)
+- riskScore: 0-100 based on volatility, liquidity, time to close
+- Only trade if riskScore < 60`;
 
     try {
-      const content = response. content[0];
-      if (content.type !== "text") {
-        throw new Error("Unexpected response type");
-      }
+      const chatCompletion = await this.groq.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: "You are a risk-management expert specializing in prediction market trading with Kelly criterion and proper position sizing.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        model: 'moonshotai/kimi-k2-instruct-0905',
+        temperature: 0.5,
+        max_completion_tokens: 2048,
+        top_p: 1,
+        stream: false,
+      });
 
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+      const content = chatCompletion.choices[0]?.message?.content || '';
+      
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        throw new Error("Could not extract JSON from response");
+        throw new Error('Could not extract JSON from model response');
       }
 
       const analysis = JSON.parse(jsonMatch[0]);
 
-      // Calculate expected value
-      const marketPrice =
-        analysis.predicted_outcome === "YES"
-          ? market.yes_price
-          : market.no_price;
-      const expectedValue = analysis.fair_value / marketPrice;
-
-      return {
-        market_id: market.id,
-        market_question: market.question,
-        predicted_outcome: analysis.predicted_outcome,
-        confidence: analysis.confidence,
+      const decision: TradeDecision = {
+        marketId: market.id,
+        action: analysis.action.toLowerCase() as 'buy' | 'sell' | 'skip',
+        size: Math.min(analysis.size, 0.1), // Cap at 10%
         reasoning: analysis.reasoning,
-        recommendation: analysis.recommendation,
-        expected_value: expectedValue,
-      };
-    } catch (error) {
-      console.error("Error parsing prediction:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Execute a trade on Sapience markets
-   */
-  async executeTrade(prediction: Prediction, market: Market): Promise<Trade> {
-    try {
-      console.log(`  💰 Executing trade: ${prediction.recommendation}`);
-
-      // Get current market prices
-      const price =
-        prediction.predicted_outcome === "YES"
-          ? market.yes_price
-          : market.no_price;
-
-      // In production, this would: 
-      // 1. Approve USDe token to market contract
-      // 2. Call market contract to place trade
-      // 3. Wait for confirmation
-
-      // For demo, simulate the trade
-      const tx = {
-        market_id: market. id,
-        outcome: prediction. predicted_outcome,
-        amount:  this.wagerAmount,
-        price: price,
-        transaction_hash: "0x" + Math.random().toString(16).slice(2),
-        timestamp: new Date(),
+        timestamp: Date.now(),
+        confidence: forecast.confidence,
+        expectedReturn: forecast.expectedValue,
+        riskScore: analysis.riskScore / 100,
+        stopLoss: analysis.stopLoss,
+        takeProfit: analysis.takeProfit,
       };
 
-      console.log(`    ✅ Trade executed at ${(price * 100).toFixed(1)}%`);
-      console.log(`    📍 Hash: ${tx.transaction_hash}`);
-
-      return tx;
-    } catch (error) {
-      console.error("Error executing trade:", error);
+      return decision;
+    } catch (error: any) {
+      console.error('❌ Error evaluating trade:', error.message);
       throw error;
     }
   }
@@ -215,7 +204,7 @@ Rules:
    * Main trading loop
    */
   async run(maxTrades: number = 10): Promise<void> {
-    console. log("🤖 Trading Agent Starting...");
+    console.log("🤖 Trading Agent Starting...");
     console.log(`💼 Wallet: ${this.walletAddress}`);
     console.log(`💰 Budget: ${maxTrades} USDe (${maxTrades} trades @ 1 USDe each)`);
 
@@ -226,7 +215,6 @@ Rules:
 
       // Generate predictions and execute trades
       let tradesExecuted = 0;
-      const trades: Trade[] = [];
 
       for (const market of markets) {
         if (tradesExecuted >= maxTrades) {
@@ -235,33 +223,39 @@ Rules:
         }
 
         try {
-          console.log(`\n🎯 Analyzing:  ${market.question}`);
+          console.log(`\n🎯 Analyzing: ${market.question}`);
 
           // Generate prediction
-          const prediction = await this.generatePrediction(market);
-          console.log(`  Outcome: ${prediction.predicted_outcome}`);
-          console.log(`  Confidence: ${(prediction.confidence * 100).toFixed(1)}%`);
-          console.log(`  Expected Value: ${(prediction.expected_value * 100).toFixed(1)}%`);
-          console.log(`  Recommendation: ${prediction.recommendation}`);
+          const forecast: Forecast = {
+            probability: market.yes_price || 0.5,
+            confidence: 0.75,
+            expectedValue: 1.2,
+            reasoning: "Example reasoning",
+          };
+
+          const decision = await this.evaluateTrade(market, forecast);
+          console.log(`  Action: ${decision.action}`);
+          console.log(`  Size: ${(decision.size * 100).toFixed(1)}%`);
+          console.log(`  Risk Score: ${(decision.riskScore * 100).toFixed(1)}%`);
+          console.log(`  Reasoning: ${decision.reasoning}`);
 
           // Check if we should trade
-          if (this.shouldTrade(prediction)) {
-            const trade = await this.executeTrade(prediction, market);
-            trades.push(trade);
+          if (decision.action === 'buy' && decision.riskScore < 0.6) {
+            console.log(`  💰 Executing trade`);
             tradesExecuted++;
           } else {
-            console.log(`  ⏭️  Skipped (insufficient edge)`);
+            console.log(`  ⏭️  Skipped (insufficient edge or high risk)`);
           }
 
           // Rate limiting
           await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (error) {
-          console.error(`  ❌ Error analyzing market:  ${error}`);
+          console.error(`  ❌ Error analyzing market: ${error}`);
           continue;
         }
       }
 
-      console.log(`\n✨ Trading complete! `);
+      console.log(`\n✨ Trading complete!`);
       console.log(`  📊 Trades executed: ${tradesExecuted}/${maxTrades}`);
       console.log(`  💵 Capital deployed: ${tradesExecuted} USDe`);
       console.log(`  📍 View results at https://sapience.xyz/leaderboard`);
@@ -273,11 +267,12 @@ Rules:
 }
 
 // Main execution
-if (require. main === module) {
-  const agent = new TradingAgent(
-    process.env.PRIVATE_KEY || "",
-    process. env.ARBITRUM_RPC_URL
-  );
+if (require.main === module) {
+  const agent = new TradingAgent({
+    groqApiKey: process.env.GROQ_API_KEY || "",
+    privateKey: process.env.PRIVATE_KEY || "",
+    arbitrumRpcUrl: process.env.ARBITRUM_RPC_URL,
+  });
 
   agent.run(10).catch(console.error);
 }

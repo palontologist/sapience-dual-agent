@@ -1,0 +1,6 @@
+# Environment variables - DO NOT COMMIT TO GIT
+.env
+.env.local
+.env.*.local
+
+node_modules

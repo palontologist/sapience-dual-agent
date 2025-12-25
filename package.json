@@ -13,6 +13,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:dome": "ts-node src/test-dome-groq.ts",
+    "test:direct": "ts-node src/test-direct-groq.ts",
+    "test:dome-debug": "ts-node src/test-dome-debug.ts",
     "clean": "rimraf dist",
     "prebuild": "npm run clean"
   },
@@ -26,9 +29,14 @@
   "author": "21givenchy",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@dome-api/sdk": "^0.17.0",
+    "@privy-io/server-auth": "^1.32.5",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
+    "ethers": "^6.16.0",
     "express": "^4.21.0",
+    "groq-sdk": "^0.37.0",
     "node-fetch": "^2.7.0"
   },
   "devDependencies": {

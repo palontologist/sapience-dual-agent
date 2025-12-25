@@ -44,11 +44,44 @@ export const API_KEYS = {
   SAPIENCE_API_KEY: process.env. SAPIENCE_API_KEY || "",
 };
 
-export function validateConfig(): void {
-  if (!API_KEYS.ANTHROPIC) {
-    throw new Error("ANTHROPIC_API_KEY not set");
+export interface Config {
+  // API Keys
+  groqApiKey: string;
+  domeApiKey: string;
+  anthropicApiKey?: string;
+  
+  // Agent settings
+  agentModel: string;
+  agentTemperature: number;
+  agentMaxTokens: number;
+  
+  // Server
+  port: number;
+  host: string;
+  nodeEnv: string;
+}
+
+export function validateConfig(): Config {
+  const config: Config = {
+    groqApiKey: process.env.GROQ_API_KEY || '',
+    domeApiKey: process.env.DOME_API_KEY || '',
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    agentModel: process.env.AGENT_MODEL || 'moonshotai/kimi-k2-instruct-0905',
+    agentTemperature: parseFloat(process.env.AGENT_TEMPERATURE || '0.6'),
+    agentMaxTokens: parseInt(process.env.AGENT_MAX_TOKENS || '4096'),
+    port: parseInt(process.env.PORT || '3000'),
+    host: process.env.HOST || 'localhost',
+    nodeEnv: process.env.NODE_ENV || 'development',
+  };
+
+  // Only require Groq and Dome API keys
+  if (!config.groqApiKey) {
+    throw new Error('GROQ_API_KEY not set');
   }
-  if (!API_KEYS.PRIVATE_KEY) {
-    throw new Error("PRIVATE_KEY not set");
+  
+  if (!config.domeApiKey) {
+    throw new Error('DOME_API_KEY not set');
   }
+
+  return config;
 }

@@ -7,7 +7,7 @@
  * No trading capital required - pure forecasting. 
  */
 
-import { Anthropic } from "@anthropic-ai/sdk";
+import Groq from 'groq-sdk';
 import { ethers } from "ethers";
 import axios from "axios";
 
@@ -15,18 +15,25 @@ interface Market {
   id: string;
   question: string;
   description: string;
-  resolution_date: string;
-  yes_price: number;
-  no_price: number;
-  liquidity:  number;
+  platform?: string;
+  currentPrice?: number;
+  volume?: number;
+  closeTime?: number;
+  resolution_date?: string;
+  yes_price?: number;
+  no_price?: number;
+  liquidity?: number;
 }
 
 interface Forecast {
-  market_id: string;
+  marketId: string;
   probability: number;
   confidence: number;
   reasoning: string;
-  timestamp: Date;
+  expectedValue?: number;
+  recommendation?: string;
+  timestamp: number;
+  modelUsed?: string;
 }
 
 interface EASAttestation {
@@ -36,26 +43,33 @@ interface EASAttestation {
   block_number: number;
 }
 
+interface Config {
+  privateKey: string;
+  arbitrumRpcUrl: string;
+  easSchemaUID: string;
+  groqApiKey: string;
+}
+
 export class ForecastingAgent {
-  private anthropic: Anthropic;
+  private groq: Groq;
   private provider: ethers.JsonRpcProvider;
   private signer: ethers.Signer;
   private easContractAddress: string;
   private easSchemaUID: string;
   private walletAddress: string;
+  private config: Config;
 
-  constructor(
-    privateKey: string,
-    arbitrumRpcUrl: string = "https://arb1.arbitrum.io/rpc",
-    easSchemaUID: string = "0x..." // Will be set during setup
-  ) {
-    this.anthropic = new Anthropic();
-    this.provider = new ethers.JsonRpcProvider(arbitrumRpcUrl);
-    this.signer = new ethers.Wallet(privateKey, this.provider);
+  constructor(config: Config) {
+    this.config = config;
+    this.groq = new Groq({
+      apiKey: config.groqApiKey,
+    });
+    this.provider = new ethers.JsonRpcProvider(config.arbitrumRpcUrl);
+    this.signer = new ethers.Wallet(config.privateKey, this.provider);
     this.walletAddress = ethers.getAddress(
-      ethers.computeAddress(new ethers.SigningKey(privateKey).publicKey)
+      ethers.computeAddress(new ethers.SigningKey(config.privateKey).publicKey)
     );
-    this.easSchemaUID = easSchemaUID;
+    this.easSchemaUID = config.easSchemaUID;
     this.easContractAddress = "0xA1207F3BBa224E02c159c0dFpF493b4e5C10e6B9"; // EAS on Arbitrum
   }
 
@@ -79,68 +93,93 @@ export class ForecastingAgent {
   }
 
   /**
-   * Generate a forecast using Claude
-   * 
-   * Claude analyzes market data and generates probability estimate + reasoning
+   * Generate a forecast using Groq with Kimi model
    */
   async generateForecast(market: Market): Promise<Forecast> {
-    const prompt = `
-You are a forecasting expert analyzing prediction markets. 
+    console.log(`\n🤖 Generating forecast for: ${market.question}`);
 
-Market: "${market.question}"
-Description: ${market.description}
-Resolution Date: ${market.resolution_date}
-Current YES Price: ${market.yes_price}
-Current NO Price: ${market.no_price}
-Liquidity: ${market.liquidity}
+    const systemContext = `You are an expert prediction market analyst who uses statistical methods and market microstructure analysis to forecast outcomes. You understand order-book dynamics, calibration curves, and risk management principles.`;
 
-Based on this information, provide: 
-1. Your probability estimate (0-100) for YES outcome
-2. Your confidence level (0-100)
-3. Brief reasoning for your forecast
+    const currentPrice = market.currentPrice || market.yes_price || 0.5;
+    const platform = market.platform || 'Unknown';
+    const volume = market.volume || 0;
+    const closeTime = market.closeTime || (market.resolution_date ? new Date(market.resolution_date).getTime() : null);
 
-Respond in JSON format:
+    const userPrompt = `Analyze this prediction market and provide a statistical forecast:
+
+Market Information:
+- Question: "${market.question}"
+- Platform: ${platform.toUpperCase()}
+- Current Price: ${(currentPrice * 100).toFixed(1)}%
+- Volume: $${volume.toLocaleString()}
+- Close Date: ${closeTime ? new Date(closeTime).toISOString() : 'N/A'}
+
+Using your statistical forecasting methodology, analyze if the market is efficiently priced or if there's an edge. Provide your analysis in JSON format:
 {
-  "probability": <number>,
-  "confidence": <number>,
-  "reasoning": "<string>"
+  "probability": <number 0-100>,
+  "confidence": <number 0-100>,
+  "reasoning": "<detailed reasoning using market microstructure, historical patterns, and statistical analysis>",
+  "expectedValue": <number>,
+  "recommendation": "BUY" or "SELL" or "HOLD"
 }
-    `;
 
-    const response = await this.anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens:  500,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-    });
+Rules:
+- probability: Your calibrated probability estimate (0-100)
+- confidence: How confident you are in your estimate (0-100)
+- expectedValue: Expected value considering fees and spreads
+- recommendation: BUY if edge > 5%, SELL if edge < -5%, HOLD if fairly priced
+- Only recommend BUY/SELL if confidence > 65%`;
 
     try {
-      const content = response.content[0];
-      if (content.type !== "text") {
-        throw new Error("Unexpected response type");
-      }
+      const chatCompletion = await this.groq.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: systemContext,
+          },
+          {
+            role: "user",
+            content: "Can you forecast future trades on prediction markets based on real data?"
+          },
+          {
+            role: "assistant",
+            content: "I can show you how to turn raw prediction-market data into statistically-driven forecasts. I use market microstructure analysis (order-book snapshots, bid-ask spreads, order-flow imbalance), calibrated probabilistic models, and proper risk management to detect when market prices drift from the best statistical estimate of underlying events."
+          },
+          {
+            role: "user",
+            content: userPrompt,
+          },
+        ],
+        model: 'moonshotai/kimi-k2-instruct-0905',
+        temperature: 0.6,
+        max_completion_tokens: 4096,
+        top_p: 1,
+        stream: false,
+      });
 
-      // Parse JSON from Claude's response
-      const jsonMatch = content.text.match(/\{[\s\S]*\}/);
+      const content = chatCompletion.choices[0]?.message?.content || '';
+      
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        throw new Error("Could not extract JSON from response");
+        throw new Error('Could not extract JSON from model response');
       }
 
-      const forecast = JSON.parse(jsonMatch[0]);
+      const analysis = JSON.parse(jsonMatch[0]);
 
-      return {
-        market_id: market.id,
-        probability: forecast.probability / 100, // Convert to 0-1
-        confidence: forecast.confidence / 100,
-        reasoning: forecast. reasoning,
-        timestamp: new Date(),
+      const forecast: Forecast = {
+        marketId: market.id,
+        probability: analysis.probability / 100,
+        confidence: analysis.confidence / 100,
+        reasoning: analysis.reasoning,
+        expectedValue: analysis.expectedValue || 0,
+        recommendation: analysis.recommendation === 'BUY' ? 'buy' : analysis.recommendation === 'SELL' ? 'sell' : 'hold',
+        timestamp: Date.now(),
+        modelUsed: 'moonshotai/kimi-k2-instruct-0905',
       };
-    } catch (error) {
-      console.error("Error parsing forecast:", error);
+
+      return forecast;
+    } catch (error: any) {
+      console.error('❌ Error generating forecast:', error.message);
       throw error;
     }
   }
@@ -172,11 +211,11 @@ Respond in JSON format:
           "uint64", // timestamp
         ],
         [
-          forecast.market_id,
+          forecast.marketId,
           Math.round(forecast.probability * 10000),
           Math.round(forecast.confidence * 10000),
           forecast.reasoning,
-          Math.floor(forecast.timestamp.getTime() / 1000),
+          Math.floor(forecast.timestamp / 1000),
         ]
       );
 
@@ -198,7 +237,7 @@ Respond in JSON format:
 
       // Extract attestation UID from logs
       // (In production, would properly parse events)
-      const attestationUID = receipt.logs[0]?. topics? .[1] || "0x";
+      const attestationUID = receipt.logs[0]?.topics?.[1] || "0x";
 
       return {
         uid:  attestationUID,
@@ -262,11 +301,14 @@ Respond in JSON format:
 
 // Main execution
 if (require.main === module) {
-  const agent = new ForecastingAgent(
-    process.env.PRIVATE_KEY || "",
-    process.env.ARBITRUM_RPC_URL,
-    process.env.EAS_SCHEMA_UID
-  );
+  const config: Config = {
+    privateKey: process.env.PRIVATE_KEY || "",
+    arbitrumRpcUrl: process.env.ARBITRUM_RPC_URL || "",
+    easSchemaUID: process.env.EAS_SCHEMA_UID || "",
+    groqApiKey: process.env.GROQ_API_KEY || "",
+  };
+
+  const agent = new ForecastingAgent(config);
 
   agent.run(10).catch(console.error);
 }
