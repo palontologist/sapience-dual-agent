@@ -18,7 +18,7 @@ async function main() {
     validateConfig();
 
     const mode = process.env.AGENT_MODE || "forecasting"; // Default to forecasting only
-    const maxForecasts = parseInt(process.env.MAX_FORECASTS || "10");
+    const maxForecasts = parseInt(process.env.MAX_FORECASTS || "2");
 
     if (mode === "forecasting" || mode === "both") {
       console.log("📊 Starting Forecasting Agent...\n");

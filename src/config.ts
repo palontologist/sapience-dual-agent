@@ -36,6 +36,11 @@ export const SAPIENCE_CONFIG = {
   MIN_LIQUIDITY: 1000, // Minimum liquidity to consider
   MIN_DAYS_TO_RESOLUTION: 1,
   MAX_DAYS_TO_RESOLUTION: 365,
+
+  // Agent parameters - Groq configuration
+  GROQ_MODEL: process.env.AGENT_MODEL || 'moonshotai/kimi-k2-instruct-0905',
+  GROQ_TEMPERATURE: parseFloat(process.env.AGENT_TEMPERATURE || '0.3'),
+  GROQ_MAX_TOKENS: parseInt(process.env.AGENT_MAX_TOKENS || '200'),
 };
 
 export const API_KEYS = {

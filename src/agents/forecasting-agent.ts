@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import Groq from 'groq-sdk';
 import { gql } from 'graphql-request';
-import { graphqlRequest,  } from '@sapience/sdk';
+import { graphqlRequest, } from '@sapience/sdk';
+import { SAPIENCE_CONFIG } from '../config';
 
 interface Condition {
   id: string;
@@ -14,6 +15,11 @@ interface Forecast {
   conditionId: string;
   probability: number;
   reasoning: string;
+}
+
+interface ForecastWithConfidence extends Forecast {
+  confidence: number;
+  edge: number; // Absolute difference from 50% (market uncertainty)
 }
 
 interface Config {
@@ -59,36 +65,71 @@ export class ForecastingAgent {
     return conditions;
   }
 
-  async generateForecast(condition: Condition): Promise<Forecast> {
+  async generateForecast(condition: Condition): Promise<ForecastWithConfidence> {
     const question = condition.shortName || condition.question;
     console.log(`\n🤖 Forecasting: ${question.substring(0, 80)}...`);
 
     const response = await this.groq.chat.completions.create({
       messages: [{
-        role: 'user',
-        content: `Estimate probability (0-100) this question resolves YES: "${question}"
+        role: 'system',
+        content: `You are a professional forecaster. Analyze prediction markets using:
+1. Base-rate analysis (historical precedent)
+2. Conditional probabilities 
+3. Specific quantitative evidence
+4. Market structure/liquidity analysis
+5. Bayesian reasoning
 
-Output format: probability number then brief reasoning (<160 chars)`
+Format: [probability]% | confidence:[0-100] | [reasoning with specific numbers and logic]`
+      }, {
+        role: 'user',
+        content: `Forecast this binary outcome (0-100%): "${question}"
+
+Provide:
+- Probability estimate (0-100)
+- Confidence score (0-100) - how certain you are based on available evidence
+- Base rates from similar historical events with specific percentages
+- Key conditional factors with quantitative estimates
+- Specific numerical justifications (e.g., "Historical rate: 23%, adjusted +15% for X factor")
+- Market inefficiency analysis if applicable
+
+Format: [probability]% | confidence:[score] | [reasoning]
+Keep reasoning under 280 chars but be specific with numbers.`
       }],
-      model: 'moonshotai/kimi-k2-instruct-0905',
-      temperature: 0.3,
-      max_tokens: 150,
+      model: SAPIENCE_CONFIG.GROQ_MODEL,
+      temperature: SAPIENCE_CONFIG.GROQ_TEMPERATURE,
+      max_tokens: SAPIENCE_CONFIG.GROQ_MAX_TOKENS,
     });
 
     const content = response.choices[0]?.message?.content?.trim() || '';
     
-    const probMatch = content.match(/(\d{1,3})/);
+    // Extract probability
+    const probMatch = content.match(/(\d{1,3})%/);
     const probability = probMatch ? Math.max(0, Math.min(100, parseInt(probMatch[1]))) : 50;
     
-    const reasoning = content.replace(/\d{1,3}/g, '').trim().substring(0, 160);
+    // Extract confidence score
+    const confMatch = content.match(/confidence:\s*(\d{1,3})/i);
+    const confidence = confMatch ? Math.max(0, Math.min(100, parseInt(confMatch[1]))) : 50;
+    
+    // Extract reasoning (remove probability and confidence)
+    const reasoning = content
+      .replace(/^\d{1,3}%\s*\|?\s*/, '') // Remove leading "XX% |"
+      .replace(/confidence:\s*\d{1,3}\s*\|?\s*/i, '') // Remove confidence score
+      .trim()
+      .substring(0, 280); // Leave room for encoding
 
     console.log(`   Probability: ${probability}%`);
+    console.log(`   Confidence: ${confidence}%`);
     console.log(`   Reasoning: ${reasoning}`);
+
+    // Calculate edge (distance from 50% = strength of conviction)
+    const edge = Math.abs(probability - 50);
 
     return {
       conditionId: condition.id,
       probability,
-      reasoning: reasoning || 'Model-based statistical forecast',
+      confidence,
+      edge,
+      reasoning: reasoning || `Base rate ${probability}% from similar historical outcomes`,
     };
   }
 
@@ -208,11 +249,11 @@ Output format: probability number then brief reasoning (<160 chars)`
   }
 
   /**
-   * Main forecasting loop
+   * Main forecasting loop - generates forecasts and submits the most confident one
    */
-  async run(maxForecasts: number = 10): Promise<void> {
+  async run(maxForecasts: number = 2): Promise<void> {
     console.log("🤖 Forecasting Agent Starting...");
-    console.log(`📊 Target: ${maxForecasts} forecasts\n`);
+    console.log(`📊 Strategy: Submit ${maxForecasts} forecasts (1 highest confidence + 1 highest edge)\n`);
 
     try {
       // Fetch active conditions
@@ -225,42 +266,91 @@ Output format: probability number then brief reasoning (<160 chars)`
 
       console.log(`\n📈 Found ${conditions.length} active conditions`);
 
-      // Generate forecasts for random selection
-      const selectedConditions = conditions
-        .sort(() => Math.random() - 0.5)
-        .slice(0, maxForecasts);
+      // Generate forecasts for ALL conditions to find the best ones
+      console.log('\n🔍 Evaluating all conditions...\n');
+      
+      const allForecasts: ForecastWithConfidence[] = [];
+      
+      for (const condition of conditions) {
+        try {
+          const forecast = await this.generateForecast(condition);
+          allForecasts.push(forecast);
+          
+          // Rate limiting between API calls
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        } catch (error) {
+          console.error(`  ⚠️  Skipped condition: ${error}`);
+          continue;
+        }
+      }
+
+      if (allForecasts.length === 0) {
+        console.log('❌ No forecasts generated');
+        return;
+      }
+
+      // Strategy: Pick 1 highest confidence + 1 highest edge (different forecasts)
+      const byConfidence = [...allForecasts].sort((a, b) => b.confidence - a.confidence);
+      const byEdge = [...allForecasts].sort((a, b) => b.edge - a.edge);
+      
+      const selectedForecasts: ForecastWithConfidence[] = [];
+      
+      // Add highest confidence forecast
+      if (byConfidence.length > 0) {
+        selectedForecasts.push(byConfidence[0]);
+      }
+      
+      // Add highest edge forecast (if different from highest confidence)
+      if (byEdge.length > 0 && byEdge[0].conditionId !== byConfidence[0]?.conditionId) {
+        selectedForecasts.push(byEdge[0]);
+      } else if (byConfidence.length > 1) {
+        // If same forecast, add second highest confidence
+        selectedForecasts.push(byConfidence[1]);
+      }
+
+      // Limit to maxForecasts
+      const finalForecasts = selectedForecasts.slice(0, maxForecasts);
+      
+      console.log(`\n📊 Generated ${allForecasts.length} forecasts`);
+      console.log(`\n🎯 Selected ${finalForecasts.length} for submission:`);
+      finalForecasts.forEach((f, i) => {
+        const question = conditions.find(c => c.id === f.conditionId)?.shortName || 'Unknown';
+        console.log(`   ${i + 1}. ${question.substring(0, 50)}`);
+        console.log(`      Probability: ${f.probability}% | Confidence: ${f.confidence}% | Edge: ${f.edge.toFixed(1)}%`);
+      });
+      
+      console.log(`\n📤 Submitting ${finalForecasts.length} forecast(s)...\n`);
 
       let successCount = 0;
       let failCount = 0;
+      let totalGasCost = 0;
 
-      for (const condition of selectedConditions) {
+      for (const forecast of finalForecasts) {
         try {
-          const question = condition.shortName || condition.question;
-          console.log(`\n🎯 Condition: ${question}`);
-          console.log(`   ID: ${condition.id}`);
-
-          // Generate forecast
-          const forecast = await this.generateForecast(condition);
-          console.log(`   Probability: ${forecast.probability}%`);
-          console.log(`   Reasoning: ${forecast.reasoning}`);
-
-          // Submit to Sapience
+          const question = conditions.find(c => c.id === forecast.conditionId)?.shortName || 'Unknown';
+          console.log(`\n🎯 ${question.substring(0, 60)}`);
+          console.log(`   ${forecast.probability}% (confidence: ${forecast.confidence}%, edge: ${forecast.edge.toFixed(1)}%)`);
+          
           await this.submitForecastToSapience(forecast);
           successCount++;
+          totalGasCost += 0.0015; // Approximate gas cost per tx
 
-          // Rate limiting
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          // Rate limiting between transactions
+          await new Promise((resolve) => setTimeout(resolve, 3000));
         } catch (error) {
-          console.error(`  ❌ Error processing condition: ${error}`);
+          console.error(`  ❌ Submission failed: ${error}`);
           failCount++;
           continue;
         }
       }
 
       console.log(`\n✨ Forecasting complete!`);
-      console.log(`  📊 Successful: ${successCount}/${selectedConditions.length}`);
-      console.log(`  ❌ Failed: ${failCount}/${selectedConditions.length}`);
-      console.log(`  📍 View results at https://sapience.xyz/leaderboard`);
+      console.log(`  📊 Successful: ${successCount}/${finalForecasts.length}`);
+      if (failCount > 0) {
+        console.log(`  ❌ Failed: ${failCount}/${finalForecasts.length}`);
+      }
+      console.log(`  ⛽ Estimated gas cost: ~$${(totalGasCost * 3000).toFixed(2)} (at $3000/ETH)`);
+      console.log(`  📍 View results: https://sapience.xyz/leaderboard#accuracy`);
     } catch (error) {
       console.error("Fatal error:", error);
       throw error;
