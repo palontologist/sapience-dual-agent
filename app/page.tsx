@@ -1,11 +1,13 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import ForecastingDashboard from '@/components/ForecastingDashboard'
 import AgentControls from '@/components/AgentControls'
 import MarketList from '@/components/MarketList'
 
 export default function Home() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState<'dashboard' | 'markets' | 'control'>('dashboard')
 
   return (
@@ -13,12 +15,22 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 mb-2">
-            🎯 Sapience Dual Agent
-          </h1>
-          <p className="text-gray-400 text-lg">
-            AI-Powered Prediction Market Forecasting
-          </p>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 mb-2">
+                🎯 Sapience Dual Agent
+              </h1>
+              <p className="text-gray-400 text-lg">
+                AI-Powered Prediction Market Forecasting
+              </p>
+            </div>
+            <button
+              onClick={() => router.push('/dome')}
+              className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all transform hover:scale-105"
+            >
+              🔮 Dome Markets
+            </button>
+          </div>
         </header>
 
         {/* Navigation Tabs */}
@@ -41,7 +53,7 @@ export default function Home() {
                 : 'text-gray-400 hover:text-gray-300'
             }`}
           >
-            🎲 Markets
+            🎲 Sapience Markets
           </button>
           <button
             onClick={() => setActiveTab('control')}
