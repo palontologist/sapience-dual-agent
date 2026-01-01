@@ -21,6 +21,8 @@
     "test:dry-run": "tsx src/test-dry-run.ts",
     "dry-run": "tsx src/trading-dry-run.ts",
     "dry-run:quick": "cross-env MAX_TRADES=3 tsx src/trading-dry-run.ts",
+    "ethereal:dry-run": "tsx src/ethereal-dry-run.ts",
+    "perps:dry-run": "tsx src/ethereal-dry-run.ts",
     "clean": "rimraf dist .next",
     "prebuild": "npm run clean"
   },
