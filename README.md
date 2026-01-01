@@ -88,6 +88,28 @@ See [.env.example](.env.example) for all options.
 
 ## Usage
 
+### 🧪 Dry Run (Test Without Real Money) - RECOMMENDED FIRST
+
+Before trading with real money, test the trading agent in dry run mode:
+
+```bash
+# Quick test (2-3 markets)
+pnpm test:dry-run
+
+# Full dry run (up to 10 markets)
+pnpm dry-run
+```
+
+This will:
+- ✅ Fetch real market data
+- ✅ Generate AI forecasts
+- ✅ Show what trades the agent would make
+- ✅ Calculate risk and expected returns
+- ❌ NOT execute any real trades
+- ❌ NOT spend any money
+
+**See [DRY_RUN_GUIDE.md](DRY_RUN_GUIDE.md) for detailed instructions.**
+
 ### Forecasting Only (No Trading)
 
 ```bash
@@ -95,6 +117,8 @@ AGENT_MODE=forecasting pnpm dev
 ```
 
 ### Trading Mode (Requires USDe)
+
+⚠️ **Run dry-run first!** See [DRY_RUN_GUIDE.md](DRY_RUN_GUIDE.md)
 
 ```bash
 AGENT_MODE=trading pnpm dev

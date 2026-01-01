@@ -18,6 +18,9 @@
     "test:dome": "ts-node src/test-dome-groq.ts",
     "test:direct": "ts-node src/test-direct-groq.ts",
     "test:dome-debug": "ts-node src/test-dome-debug.ts",
+    "test:dry-run": "tsx src/test-dry-run.ts",
+    "dry-run": "tsx src/trading-dry-run.ts",
+    "dry-run:quick": "cross-env MAX_TRADES=3 tsx src/trading-dry-run.ts",
     "clean": "rimraf dist .next",
     "prebuild": "npm run clean"
   },
@@ -68,6 +71,7 @@
     "tailwindcss": "^3.4.15",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   },
   "engines": {
