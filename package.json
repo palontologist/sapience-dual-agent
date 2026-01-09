@@ -24,7 +24,16 @@
     "ethereal:dry-run": "tsx src/ethereal-dry-run.ts",
     "perps:dry-run": "tsx src/ethereal-dry-run.ts",
     "clean": "rimraf dist .next",
-    "prebuild": "npm run clean"
+    "prebuild": "npm run clean",
+    "test:trading-agent": "tsx scripts/test-trading-agent.ts",
+    "trading-agent:dry-run": "DRY_RUN=true tsx src/agents/trading-agent.ts",
+    "trading-agent:live": "DRY_RUN=false tsx src/agents/trading-agent.ts",
+    "test:ethereal": "tsx scripts/test-ethereal-trading.ts",
+    "test:ethereal:dry-run": "tsx scripts/test-ethereal-dry-run.ts",
+    "optimize:agent": "tsx scripts/optimize-agent.ts",
+    "trade:live": "tsx scripts/trade-live-ethereal.ts",
+    "generate:dashboard": "tsx scripts/generate-dashboard.ts",
+    "verify-trades": "tsx scripts/verify-trades.ts"
   },
   "keywords": [
     "ai",

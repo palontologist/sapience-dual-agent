@@ -10,6 +10,7 @@
 import Groq from 'groq-sdk';
 import { ethers } from "ethers";
 import axios from "axios";
+import { TradeTracker, TradeResult } from './trade-tracker';
 
 interface Market {
   id: string;
@@ -36,6 +37,8 @@ interface Config {
   groqApiKey: string;
   privateKey: string;
   arbitrumRpcUrl?: string;
+  dryRun?: boolean;
+  marketFilter?: string[];
 }
 
 interface Forecast {
@@ -64,6 +67,9 @@ export class TradingAgent {
   private walletAddress: string;
   private minConfidence: number = 0.65;
   private minExpectedValue: number = 1.1;
+  private dryRun: boolean = false;
+  private tracker: TradeTracker;
+  private marketFilter?: string[];
 
   constructor(config: Config) {
     this.provider = new ethers.JsonRpcProvider(config.arbitrumRpcUrl || "https://arb1.arbitrum.io/rpc");
@@ -72,6 +78,9 @@ export class TradingAgent {
       apiKey: config.groqApiKey,
     });
     this.walletAddress = wallet.address;
+    this.dryRun = config.dryRun || false;
+    this.tracker = new TradeTracker();
+    this.marketFilter = config.marketFilter;
   }
 
   /**
@@ -88,92 +97,9 @@ export class TradingAgent {
 
       return response.data.markets;
     } catch (error) {
-      console.error("Error fetching markets:", error);
+      console.error("Error fetching Sapience markets:", error);
+      console.log("\n⚠️  Sapience API unavailable. Use Ethereal markets instead with: pnpm test:ethereal\n");
       return [];
-    }
-  }
-
-  /**
-   * Evaluate a trade using Groq and Kimi model
-   */
-  async evaluateTrade(
-    market: Market,
-    forecast: Forecast
-  ): Promise<TradeDecision> {
-    console.log(`\n💼 Evaluating trade for: ${market.question}`);
-
-    const prompt = `You are a risk-management expert for prediction markets. Evaluate this trading opportunity:
-
-Market: "${market.question}"
-Platform: ${market.description}
-Current Price: ${(market.yes_price! * 100).toFixed(1)}%
-Forecast Probability: ${(forecast.probability * 100).toFixed(1)}%
-Forecast Confidence: ${(forecast.confidence * 100).toFixed(1)}%
-Expected Value: ${forecast.expectedValue.toFixed(3)}
-
-Forecast Reasoning: ${forecast.reasoning}
-
-Apply Kelly criterion and risk management. Provide decision in JSON:
-{
-  "action": "BUY" or "SELL" or "SKIP",
-  "size": <number 0-1>,
-  "reasoning": "<detailed reasoning>",
-  "riskScore": <number 0-100>,
-  "stopLoss": <number or null>,
-  "takeProfit": <number or null>
-}
-
-Rules:
-- action: BUY if edge > 5% and confidence > 70%, SELL if edge < -5% and confidence > 70%, else SKIP
-- size: Kelly stake capped at 10% of bankroll (0.1 max)
-- riskScore: 0-100 based on volatility, liquidity, time to close
-- Only trade if riskScore < 60`;
-
-    try {
-      const chatCompletion = await this.groq.chat.completions.create({
-        messages: [
-          {
-            role: "system",
-            content: "You are a risk-management expert specializing in prediction market trading with Kelly criterion and proper position sizing.",
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        model: 'moonshotai/kimi-k2-instruct-0905',
-        temperature: 0.5,
-        max_tokens: 2048,
-        top_p: 1,
-        stream: false,
-      });
-
-      const content = chatCompletion.choices[0]?.message?.content || '';
-      
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('Could not extract JSON from model response');
-      }
-
-      const analysis = JSON.parse(jsonMatch[0]);
-
-      const decision: TradeDecision = {
-        marketId: market.id,
-        action: analysis.action.toLowerCase() as 'buy' | 'sell' | 'skip',
-        size: Math.min(analysis.size, 0.1), // Cap at 10%
-        reasoning: analysis.reasoning,
-        timestamp: Date.now(),
-        confidence: forecast.confidence,
-        expectedReturn: forecast.expectedValue,
-        riskScore: analysis.riskScore / 100,
-        stopLoss: analysis.stopLoss,
-        takeProfit: analysis.takeProfit,
-      };
-
-      return decision;
-    } catch (error: any) {
-      console.error('❌ Error evaluating trade:', error.message);
-      throw error;
     }
   }
 
@@ -195,14 +121,31 @@ Rules:
     console.log("🤖 Trading Agent Starting...");
     console.log(`💼 Wallet: ${this.walletAddress}`);
     console.log(`💰 Budget: ${maxTrades} USDe (${maxTrades} trades @ 1 USDe each)`);
+    
+    if (this.marketFilter) {
+      console.log(`🔍 Filtering for: ${this.marketFilter.join(', ')}`);
+    }
+    
+    if (this.dryRun) {
+      console.log(`\n⚠️  DRY RUN MODE - No actual trades will be executed\n`);
+    }
 
     try {
       // Fetch markets
-      const markets = await this.getMarkets();
+      let markets = await this.getMarkets();
+      
+      // Apply filters
+      markets = this.filterMarkets(markets);
+      
       console.log(`\n📈 Found ${markets.length} active markets`);
 
       // Generate predictions and execute trades
       let tradesExecuted = 0;
+      const tradeResults: Array<{
+        market: Market;
+        decision: TradeDecision;
+        wouldExecute: boolean;
+      }> = [];
 
       for (const market of markets) {
         if (tradesExecuted >= maxTrades) {
@@ -228,12 +171,44 @@ Rules:
           console.log(`  Reasoning: ${decision.reasoning}`);
 
           // Check if we should trade
-          if (decision.action === 'buy' && decision.riskScore < 0.6) {
-            console.log(`  💰 Executing trade`);
+          const wouldExecute = decision.action === 'buy' && decision.riskScore < 0.6;
+          
+          // Save trade to tracker
+          if (wouldExecute || decision.action !== 'skip') {
+            const tradeResult: TradeResult = {
+              tradeId: `${market.id}-${Date.now()}`,
+              marketId: market.id,
+              question: market.question,
+              action: decision.action,
+              entryPrice: market.yes_price || 0.5,
+              size: decision.size,
+              confidence: decision.confidence,
+              expectedReturn: forecast.expectedValue,
+              riskScore: decision.riskScore,
+              timestamp: decision.timestamp,
+              reasoning: decision.reasoning,
+            };
+            
+            this.tracker.saveTrade(tradeResult);
+          }
+          
+          if (wouldExecute) {
+            if (this.dryRun) {
+              console.log(`  🔍 [DRY RUN] Would execute trade`);
+            } else {
+              console.log(`  💰 Executing trade`);
+              // Actual trade execution would go here
+            }
             tradesExecuted++;
           } else {
             console.log(`  ⏭️  Skipped (insufficient edge or high risk)`);
           }
+
+          tradeResults.push({
+            market,
+            decision,
+            wouldExecute,
+          });
 
           // Rate limiting
           await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -243,14 +218,91 @@ Rules:
         }
       }
 
-      console.log(`\n✨ Trading complete!`);
-      console.log(`  📊 Trades executed: ${tradesExecuted}/${maxTrades}`);
-      console.log(`  💵 Capital deployed: ${tradesExecuted} USDe`);
-      console.log(`  📍 View results at https://sapience.xyz/leaderboard`);
+      // Print summary
+      this.printSummary(tradeResults, tradesExecuted, maxTrades);
+      
+      // Print tracker stats
+      this.printTrackerStats();
+      
+      // Export to CSV
+      this.tracker.exportToCSV();
     } catch (error) {
       console.error("Fatal error:", error);
       throw error;
     }
+  }
+
+  /**
+   * Print trade summary
+   */
+  private printSummary(
+    tradeResults: Array<{
+      market: Market;
+      decision: TradeDecision;
+      wouldExecute: boolean;
+    }>,
+    tradesExecuted: number,
+    maxTrades: number
+  ): void {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`\n✨ Trading ${this.dryRun ? 'Analysis' : 'Session'} Complete!\n`);
+    console.log(`📊 Summary:`);
+    console.log(`  - Markets analyzed: ${tradeResults.length}`);
+    console.log(`  - Trades ${this.dryRun ? 'identified' : 'executed'}: ${tradesExecuted}/${maxTrades}`);
+    console.log(`  - Capital ${this.dryRun ? 'required' : 'deployed'}: ${tradesExecuted} USDe`);
+    
+    const buyDecisions = tradeResults.filter(r => r.decision.action === 'buy');
+    const sellDecisions = tradeResults.filter(r => r.decision.action === 'sell');
+    const skipDecisions = tradeResults.filter(r => r.decision.action === 'skip');
+    
+    console.log(`\n📈 Action Distribution:`);
+    console.log(`  - BUY:  ${buyDecisions.length}`);
+    console.log(`  - SELL: ${sellDecisions.length}`);
+    console.log(`  - SKIP: ${skipDecisions.length}`);
+
+    if (tradeResults.length > 0) {
+      const avgRiskScore = tradeResults.reduce((sum, r) => sum + r.decision.riskScore, 0) / tradeResults.length;
+      const avgConfidence = tradeResults.reduce((sum, r) => sum + r.decision.confidence, 0) / tradeResults.length;
+      const avgExpectedReturn = tradeResults.reduce((sum, r) => sum + r.decision.expectedReturn, 0) / tradeResults.length;
+
+      console.log(`\n📉 Average Metrics:`);
+      console.log(`  - Risk Score: ${(avgRiskScore * 100).toFixed(1)}%`);
+      console.log(`  - Confidence: ${(avgConfidence * 100).toFixed(1)}%`);
+      console.log(`  - Expected Return: ${avgExpectedReturn.toFixed(2)}x`);
+    }
+
+    if (this.dryRun && tradesExecuted > 0) {
+      console.log(`\n🎯 Top Trade Opportunities:`);
+      tradeResults
+        .filter(r => r.wouldExecute)
+        .sort((a, b) => b.decision.expectedReturn - a.decision.expectedReturn)
+        .slice(0, 5)
+        .forEach((result, idx) => {
+          console.log(`\n  ${idx + 1}. ${result.market.question}`);
+          console.log(`     Action: ${result.decision.action.toUpperCase()}`);
+          console.log(`     Size: ${(result.decision.size * 100).toFixed(1)}%`);
+          console.log(`     Expected Return: ${result.decision.expectedReturn.toFixed(2)}x`);
+          console.log(`     Risk Score: ${(result.decision.riskScore * 100).toFixed(1)}%`);
+        });
+    }
+
+    console.log(`\n📍 View results at https://sapience.xyz/leaderboard`);
+    console.log(`\n${'='.repeat(60)}`);
+  }
+
+  /**
+   * Print tracker statistics
+   */
+  private printTrackerStats(): void {
+    const stats = this.tracker.getStats();
+    
+    console.log(`\n📊 Historical Performance:`);
+    console.log(`  - Total trades recorded: ${stats.totalTrades}`);
+    console.log(`  - Resolved trades: ${stats.resolvedTrades}`);
+    console.log(`  - Win rate: ${(stats.winRate * 100).toFixed(1)}%`);
+    console.log(`  - Average PnL: ${stats.avgPnL.toFixed(3)} USDe`);
+    console.log(`  - Total PnL: ${stats.totalPnL.toFixed(2)} USDe`);
+    console.log(`  - Average confidence: ${(stats.avgConfidence * 100).toFixed(1)}%`);
   }
 }
 
@@ -260,6 +312,8 @@ if (require.main === module) {
     groqApiKey: process.env.GROQ_API_KEY || "",
     privateKey: process.env.PRIVATE_KEY || "",
     arbitrumRpcUrl: process.env.ARBITRUM_RPC_URL,
+    dryRun: process.env.DRY_RUN === 'true',
+    marketFilter: process.env.MARKET_FILTER ? process.env.MARKET_FILTER.split(',') : undefined,
   });
 
   agent.run(10).catch(console.error);

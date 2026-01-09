@@ -197,4 +197,242 @@ describe('TradingAgent', () => {
           expect(result).toBe(false);
       });
   });
+describe('evaluateTrade', () => {
+  let mockGroqCreate: jest.Mock;
+
+  beforeEach(() => {
+    mockGroqCreate = jest.fn();
+    agent = new TradingAgent({
+      groqApiKey: 'test-groq-key',
+      privateKey: privateKey,
+      arbitrumRpcUrl: 'http://localhost:8545',
+    });
+    (agent as any).groq = {
+      chat: {
+        completions: {
+          create: mockGroqCreate,
+        },
+      },
+    };
+  });
+
+  it('should evaluate a trade and return a decision', async () => {
+    const mockMarket = {
+      id: '1',
+      question: 'Will BTC reach $100k by EOY?',
+      description: 'Bitcoin price prediction',
+      yes_price: 0.65,
+      no_price: 0.35,
+      liquidity: 10000,
+    };
+
+    const mockForecast = {
+      probability: 0.75,
+      confidence: 0.80,
+      expectedValue: 1.25,
+      reasoning: 'Strong technical indicators and market momentum',
+    };
+
+    const mockGroqResponse = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            action: 'BUY',
+            size: 0.08,
+            reasoning: 'Positive edge with good risk/reward ratio',
+            riskScore: 45,
+            stopLoss: 0.55,
+            takeProfit: 0.85,
+          }),
+        },
+      }],
+    };
+
+    mockGroqCreate.mockResolvedValue(mockGroqResponse);
+
+    const decision = await agent.evaluateTrade(mockMarket, mockForecast);
+
+    expect(mockGroqCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'moonshotai/kimi-k2-instruct-0905',
+        temperature: 0.5,
+        max_tokens: 2048,
+      })
+    );
+
+    expect(decision).toMatchObject({
+      marketId: '1',
+      action: 'buy',
+      size: 0.08,
+      reasoning: 'Positive edge with good risk/reward ratio',
+      confidence: 0.80,
+      expectedReturn: 1.25,
+      riskScore: 0.45,
+      stopLoss: 0.55,
+      takeProfit: 0.85,
+    });
+    expect(decision.timestamp).toBeGreaterThan(0);
+  });
+
+  it('should cap position size at 10%', async () => {
+    const mockMarket = {
+      id: '2',
+      question: 'Test market',
+      description: 'Test',
+      yes_price: 0.5,
+    };
+
+    const mockForecast = {
+      probability: 0.8,
+      confidence: 0.9,
+      expectedValue: 1.5,
+      reasoning: 'Test',
+    };
+
+    const mockGroqResponse = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            action: 'BUY',
+            size: 0.25, // Exceeds 10% cap
+            reasoning: 'High confidence trade',
+            riskScore: 30,
+            stopLoss: null,
+            takeProfit: null,
+          }),
+        },
+      }],
+    };
+
+    mockGroqCreate.mockResolvedValue(mockGroqResponse);
+
+    const decision = await agent.evaluateTrade(mockMarket, mockForecast);
+
+    expect(decision.size).toBe(0.1); // Capped at 10%
+  });
+
+  it('should handle SKIP action correctly', async () => {
+    const mockMarket = {
+      id: '3',
+      question: 'Uncertain market',
+      description: 'High volatility',
+      yes_price: 0.5,
+    };
+
+    const mockForecast = {
+      probability: 0.52,
+      confidence: 0.60,
+      expectedValue: 1.05,
+      reasoning: 'Insufficient edge',
+    };
+
+    const mockGroqResponse = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            action: 'SKIP',
+            size: 0,
+            reasoning: 'Insufficient edge and low confidence',
+            riskScore: 75,
+            stopLoss: null,
+            takeProfit: null,
+          }),
+        },
+      }],
+    };
+
+    mockGroqCreate.mockResolvedValue(mockGroqResponse);
+
+    const decision = await agent.evaluateTrade(mockMarket, mockForecast);
+
+    expect(decision.action).toBe('skip');
+    expect(decision.size).toBe(0);
+    expect(decision.riskScore).toBe(0.75);
+  });
+
+  it('should throw error if Groq API fails', async () => {
+    const mockMarket = {
+      id: '4',
+      question: 'Test',
+      description: 'Test',
+      yes_price: 0.5,
+    };
+
+    const mockForecast = {
+      probability: 0.7,
+      confidence: 0.8,
+      expectedValue: 1.2,
+      reasoning: 'Test',
+    };
+
+    mockGroqCreate.mockRejectedValue(new Error('API rate limit exceeded'));
+
+    await expect(agent.evaluateTrade(mockMarket, mockForecast)).rejects.toThrow('API rate limit exceeded');
+  });
+
+  it('should throw error if response is not valid JSON', async () => {
+    const mockMarket = {
+      id: '5',
+      question: 'Test',
+      description: 'Test',
+      yes_price: 0.5,
+    };
+
+    const mockForecast = {
+      probability: 0.7,
+      confidence: 0.8,
+      expectedValue: 1.2,
+      reasoning: 'Test',
+    };
+
+    const mockGroqResponse = {
+      choices: [{
+        message: {
+          content: 'This is not JSON',
+        },
+      }],
+    };
+
+    mockGroqCreate.mockResolvedValue(mockGroqResponse);
+
+    await expect(agent.evaluateTrade(mockMarket, mockForecast)).rejects.toThrow('Could not extract JSON from model response');
+  });
+
+  it('should normalize action to lowercase', async () => {
+    const mockMarket = {
+      id: '6',
+      question: 'Test',
+      description: 'Test',
+      yes_price: 0.5,
+    };
+
+    const mockForecast = {
+      probability: 0.7,
+      confidence: 0.8,
+      expectedValue: 1.2,
+      reasoning: 'Test',
+    };
+
+    const mockGroqResponse = {
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            action: 'SELL', // Uppercase
+            size: 0.05,
+            reasoning: 'Overvalued',
+            riskScore: 40,
+            stopLoss: null,
+            takeProfit: null,
+          }),
+        },
+      }],
+    };
+
+    mockGroqCreate.mockResolvedValue(mockGroqResponse);
+
+    const decision = await agent.evaluateTrade(mockMarket, mockForecast);
+
+    expect(decision.action).toBe('sell'); // Should be lowercase
+  });
+});
 });

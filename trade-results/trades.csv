@@ -1,0 +1,1 @@
+tradeId,marketId,question,action,entryPrice,size,confidence,expectedReturn,riskScore,timestamp,resolved,actualOutcome,exitPrice,pnl
