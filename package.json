@@ -33,7 +33,11 @@
     "optimize:agent": "tsx scripts/optimize-agent.ts",
     "trade:live": "tsx scripts/trade-live-ethereal.ts",
     "generate:dashboard": "tsx scripts/generate-dashboard.ts",
-    "verify-trades": "tsx scripts/verify-trades.ts"
+    "verify-trades": "tsx scripts/verify-trades.ts",
+    "test:all": "bash scripts/quick-test.sh",
+    "git:workflow": "bash scripts/git-workflow.sh",
+    "git:pull": "git stash && git pull --rebase origin main && git stash pop",
+    "git:push": "git add . && git commit && git push origin main"
   },
   "keywords": [
     "ai",

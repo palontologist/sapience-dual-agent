@@ -448,5 +448,41 @@
     "pnl": 0.0005684060510058,
     "resolved": true,
     "resolutionDate": 1767951328421
+  },
+  {
+    "tradeId": "SOL-USD-1767951986059",
+    "marketId": "SOL-USD",
+    "question": "SOL-USD LONG @ $137.08",
+    "action": "buy",
+    "entryPrice": 137.08,
+    "size": 0.06999999999999999,
+    "confidence": 0.7,
+    "expectedReturn": 1.8,
+    "riskScore": 0.4,
+    "timestamp": 1767951986059,
+    "reasoning": "The current price momentum is slightly bullish with a 1.43% increase in the last 24 hours. The funding rate is slightly positive (0.0017%), indicating a slight long bias in the market. The 24-hour volume is $6.36M, which is relatively low, but the open interest of $3.94M suggests there is some liquidity in the market. Considering the technical setup, the price is currently above its 50-period moving average, which could be a sign of an uptrend. However, the relative strength index (RSI) is around 55, indicating a neutral condition. Given the slight long bias and the positive price momentum, a long position could be considered. | Exit: hold-complete @ 90min",
+    "actualOutcome": true,
+    "exitPrice": 137.1166576963068,
+    "pnl": 0.0002674182689435055,
+    "resolved": true,
+    "resolutionDate": 1767951986059
+  },
+  {
+    "tradeId": "ZEC-USD-1767951989031",
+    "marketId": "ZEC-USD",
+    "question": "ZEC-USD LONG @ $432.23",
+    "action": "buy",
+    "entryPrice": 432.23,
+    "size": 0.06999999999999999,
+    "confidence": 0.7,
+    "expectedReturn": 1.8,
+    "riskScore": 0.4,
+    "timestamp": 1767951989031,
+    "reasoning": "The current price momentum is positive with a 24h change of 2.38%, indicating a bullish trend. The funding rate is 0.0016%, which is slightly positive, suggesting a slight long bias in the market. The 24h volume of $2.34M and open interest of $0.66M indicate moderate liquidity. Considering the technical setup, the price is likely to continue its upward trend in the short term. With 5x leverage available, the potential return can be amplified. | Exit: hold-complete @ 90min",
+    "actualOutcome": true,
+    "exitPrice": 432.506336354969,
+    "pnl": 0.0006393271058671903,
+    "resolved": true,
+    "resolutionDate": 1767951989031
   }
 ]
