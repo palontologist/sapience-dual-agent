@@ -502,5 +502,23 @@
     "pnl": 0.000547978328829995,
     "resolved": true,
     "resolutionDate": 1767952009711
+  },
+  {
+    "tradeId": "ZEC-USD-1767952029977",
+    "marketId": "ZEC-USD",
+    "question": "ZEC-USD LONG @ $432.23",
+    "action": "buy",
+    "entryPrice": 432.23,
+    "size": 0.06999999999999999,
+    "confidence": 0.7,
+    "expectedReturn": 1.8,
+    "riskScore": 0.4,
+    "timestamp": 1767952029978,
+    "reasoning": "The 24h change of 2.38% indicates a positive price momentum, suggesting a bullish trend. The funding rate of 0.0016% is relatively low, indicating a slight long bias but not overly bullish. The 24h volume of $2.34M and open interest of $0.66M provide sufficient liquidity for trading. From a technical perspective, the current price of $432.23 is near a potential support level, and with the positive momentum, a long position could be favorable. However, the low funding rate and moderate volume suggest caution, hence the moderate confidence level. | Exit: hold-complete @ 90min",
+    "actualOutcome": true,
+    "exitPrice": 432.48528627721373,
+    "pnl": 0.000590626002854298,
+    "resolved": true,
+    "resolutionDate": 1767952029978
   }
 ]
