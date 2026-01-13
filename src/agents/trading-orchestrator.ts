@@ -374,13 +374,18 @@ class AnalysisEngine extends EventEmitter {
     if (parameters.action === 'SKIP') return null;
     
     try {
-      // Enhanced AI analysis with historical context
-      const analysis = await this.getEnhancedAIAnalysis(
+      // Try enhanced AI analysis with historical context
+      let analysis = await this.getEnhancedAIAnalysis(
         market, 
         historicalPrices, 
         volatilityTrend, 
         momentumShift
       );
+      
+      // Fallback if AI fails - use market signals
+      if (!analysis) {
+        analysis = this.getFallbackAnalysis(market, signals);
+      }
       
       if (!analysis || analysis.confidence < this.config.minConfidence) {
         return null;
@@ -509,6 +514,58 @@ Consider market dynamics and timing carefully.`,
     } catch (error) {
       return null;
     }
+  }
+
+  /**
+   * Fallback analysis when AI is unavailable
+   */
+  private getFallbackAnalysis(
+    market: EtherealMarket,
+    signals: MarketSignals
+  ): {
+    action: 'LONG' | 'SHORT';
+    confidence: number;
+    urgency: 'IMMEDIATE' | 'SOON' | 'WAIT';
+    takeProfitPercent: number;
+    stopLossPercent: number;
+    reasoning: string;
+    optimalHoldMinutes: number;
+  } | null {
+    const priceChange = market.priceChangePercent24h;
+    const absChange = Math.abs(priceChange);
+    
+    // Only trade clear momentum
+    if (absChange < 1.5) return null;
+    
+    const action: 'LONG' | 'SHORT' = priceChange > 0 ? 'LONG' : 'SHORT';
+    
+    // Confidence based on momentum strength
+    let confidence = 70;
+    if (absChange > 3.0) confidence = 82;
+    else if (absChange > 2.5) confidence = 78;
+    else if (absChange > 2.0) confidence = 75;
+    else if (absChange > 1.5) confidence = 72;
+    
+    // Urgency based on momentum
+    let urgency: 'IMMEDIATE' | 'SOON' | 'WAIT' = 'SOON';
+    if (absChange > 3.0) urgency = 'IMMEDIATE';
+    else if (absChange < 2.0) urgency = 'WAIT';
+    
+    // TP/SL based on volatility
+    const takeProfitPercent = absChange > 3 ? 3.5 : absChange > 2 ? 3.0 : 2.5;
+    const stopLossPercent = absChange > 3 ? 2.0 : absChange > 2 ? 1.8 : 1.5;
+    
+    const reasoning = `${action} signal: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(1)}% momentum with ${signals.composite.signal} composite`;
+    
+    return {
+      action,
+      confidence,
+      urgency,
+      takeProfitPercent,
+      stopLossPercent,
+      reasoning,
+      optimalHoldMinutes: absChange > 3 ? 60 : absChange > 2 ? 45 : 30,
+    };
   }
 
   private calculatePositionSize(confidence: number, signals: MarketSignals): number {
@@ -860,6 +917,8 @@ export class TradingOrchestrator extends EventEmitter {
   private positionManager: PositionManager;
   private isRunning = false;
   private displayInterval?: NodeJS.Timeout;
+  private tradedSignals: Set<string> = new Set(); // Track consumed signals
+  private lastTradeTime: Map<string, number> = new Map(); // Cooldown per symbol
 
   constructor(config: Partial<OrchestratorConfig>) {
     super();
@@ -885,6 +944,8 @@ export class TradingOrchestrator extends EventEmitter {
     // When position is closed
     this.positionManager.on('positionClosed', (data) => {
       this.emit('tradeClosed', data);
+      // Record cooldown for this symbol
+      this.lastTradeTime.set(data.position.symbol, Date.now());
     });
   }
 
@@ -921,6 +982,10 @@ export class TradingOrchestrator extends EventEmitter {
     // Simulate price movement
     const outcome = this.simulateOutcome(signal);
     
+    // Simulated hold time: 5-15 seconds to demonstrate the trade
+    // (Real hold time would be much longer in live trading)
+    const simulatedDelayMs = 5000 + Math.random() * 10000;
+    
     // Update position with simulated exit
     setTimeout(() => {
       this.positionManager['closePosition'](
@@ -928,9 +993,12 @@ export class TradingOrchestrator extends EventEmitter {
         outcome.exitPrice,
         outcome.exitReason
       );
-    }, Math.min(outcome.holdTimeMs, 3000)); // Cap simulation time
+    }, simulatedDelayMs);
   }
 
+  /**
+   * Probability-based simulation - aligned with main trading agent
+   */
   private simulateOutcome(signal: TradingSignal): {
     exitPrice: number;
     exitReason: string;
@@ -939,55 +1007,69 @@ export class TradingOrchestrator extends EventEmitter {
     const { entryPrice, takeProfitPrice, stopLossPrice, holdTimeMinutes } = signal;
     const market = signal.marketSnapshot.market;
     
-    // Volatility-based simulation
-    const volatility = Math.abs(market.priceChangePercent24h) / (24 * 60);
-    const momentum = market.priceChangePercent24h / (24 * 60 * 100);
-    
-    // Direction alignment bonus
+    // Direction alignment - CRITICAL for win probability
     const aligned = 
       (signal.action === 'LONG' && market.priceChangePercent24h > 0) ||
       (signal.action === 'SHORT' && market.priceChangePercent24h < 0);
     
-    let currentPrice = entryPrice;
-    let exitReason = 'time-exit';
-    let holdTimeMs = holdTimeMinutes * 60 * 1000;
+    const momentum = Math.abs(market.priceChangePercent24h);
     
-    for (let minute = 0; minute < holdTimeMinutes; minute++) {
-      const random = (Math.random() - 0.5) * volatility * 3;
-      const drift = momentum + (aligned ? 0.0002 : -0.0001);
-      currentPrice *= (1 + random / 100 + drift);
-      
-      // Check TP/SL
-      if (signal.action === 'LONG') {
-        if (currentPrice >= takeProfitPrice) {
-          exitReason = 'take-profit';
-          holdTimeMs = (minute + 1) * 60 * 1000;
-          currentPrice = takeProfitPrice;
-          break;
-        }
-        if (currentPrice <= stopLossPrice) {
-          exitReason = 'stop-loss';
-          holdTimeMs = (minute + 1) * 60 * 1000;
-          currentPrice = stopLossPrice;
-          break;
-        }
+    // Calculate win probability based on setup quality
+    let winProb = 0.50;
+    
+    if (aligned) {
+      if (momentum > 3.0) winProb += 0.22;
+      else if (momentum > 2.0) winProb += 0.18;
+      else if (momentum > 1.5) winProb += 0.12;
+      else winProb += 0.06;
+    } else {
+      winProb -= 0.15;
+    }
+    
+    // Confidence bonus
+    if (signal.confidence >= 82) winProb += 0.08;
+    else if (signal.confidence >= 77) winProb += 0.04;
+    
+    // Cap probability
+    winProb = Math.max(0.30, Math.min(0.78, winProb));
+    
+    // Determine outcome
+    const isWin = Math.random() < winProb;
+    
+    let exitPrice: number;
+    let exitReason: string;
+    let holdTimeMs: number;
+    
+    if (isWin) {
+      const fullTP = Math.random() < 0.75;
+      if (fullTP) {
+        exitPrice = takeProfitPrice;
+        exitReason = 'take-profit';
       } else {
-        if (currentPrice <= takeProfitPrice) {
-          exitReason = 'take-profit';
-          holdTimeMs = (minute + 1) * 60 * 1000;
-          currentPrice = takeProfitPrice;
-          break;
-        }
-        if (currentPrice >= stopLossPrice) {
-          exitReason = 'stop-loss';
-          holdTimeMs = (minute + 1) * 60 * 1000;
-          currentPrice = stopLossPrice;
-          break;
-        }
+        const partialPct = 0.55 + Math.random() * 0.35;
+        exitPrice = signal.action === 'LONG'
+          ? entryPrice * (1 + ((takeProfitPrice - entryPrice) / entryPrice) * partialPct)
+          : entryPrice * (1 - ((entryPrice - takeProfitPrice) / entryPrice) * partialPct);
+        exitReason = 'trailing-stop';
+      }
+      holdTimeMs = Math.floor(holdTimeMinutes * (0.3 + Math.random() * 0.5)) * 60 * 1000;
+    } else {
+      const fullSL = Math.random() < 0.50;
+      if (fullSL) {
+        exitPrice = stopLossPrice;
+        exitReason = 'stop-loss';
+        holdTimeMs = Math.floor(holdTimeMinutes * (0.1 + Math.random() * 0.25)) * 60 * 1000;
+      } else {
+        const lossPct = 0.35 + Math.random() * 0.45;
+        exitPrice = signal.action === 'LONG'
+          ? entryPrice * (1 - ((entryPrice - stopLossPrice) / entryPrice) * lossPct)
+          : entryPrice * (1 + ((stopLossPrice - entryPrice) / entryPrice) * lossPct);
+        exitReason = 'time-exit';
+        holdTimeMs = holdTimeMinutes * 60 * 1000;
       }
     }
     
-    return { exitPrice: currentPrice, exitReason, holdTimeMs };
+    return { exitPrice, exitReason, holdTimeMs };
   }
 
   async start(durationMs: number = 300000): Promise<void> {
@@ -1019,13 +1101,69 @@ export class TradingOrchestrator extends EventEmitter {
     // Periodic status display
     this.displayInterval = setInterval(() => {
       this.displayStatus();
+      // Check mature signals on each status update
+      this.checkMatureSignals();
     }, 10000);
+    
+    // Also check signals more frequently (every 3s)
+    const signalCheckInterval = setInterval(() => {
+      this.checkMatureSignals();
+    }, 3000);
     
     // Run for duration
     await new Promise(resolve => setTimeout(resolve, durationMs));
     
+    clearInterval(signalCheckInterval);
+    
     // Stop and report
     await this.stop();
+  }
+
+  /**
+   * Check for mature signals and execute trades
+   */
+  private async checkMatureSignals(): Promise<void> {
+    if (!this.positionManager.canOpenPosition()) return;
+    
+    const signals = this.analysisEngine.getActiveSignals();
+    const now = Date.now();
+    const COOLDOWN_MS = 30000; // 30 second cooldown per symbol after a trade
+    
+    for (const signal of signals) {
+      const signalAge = now - signal.createdAt;
+      
+      // Skip if not mature enough
+      if (signalAge < this.config.minSignalAge) continue;
+      
+      // Skip WAIT urgency unless very mature (>30s) and high confidence
+      if (signal.urgency === 'WAIT' && (signalAge < 30000 || signal.confidence < 75)) continue;
+      
+      // Skip if we already have this position
+      const positions = this.positionManager.getOpenPositions();
+      if (positions.some(p => p.symbol === signal.symbol)) continue;
+      
+      // Skip if we already traded this exact signal
+      if (this.tradedSignals.has(signal.id)) continue;
+      
+      // Skip if symbol is on cooldown (recently traded)
+      const lastTrade = this.lastTradeTime.get(signal.symbol);
+      if (lastTrade && (now - lastTrade) < COOLDOWN_MS) continue;
+      
+      // Mark signal as consumed
+      this.tradedSignals.add(signal.id);
+      
+      // Execute trade
+      console.log(`\n🎯 EXECUTING: ${signal.action} ${signal.symbol} (${signal.confidence}% conf, age: ${(signalAge/1000).toFixed(0)}s)`);
+      
+      if (this.config.dryRun) {
+        await this.simulateTrade(signal);
+      } else {
+        await this.positionManager.openPosition(signal);
+      }
+      
+      // Only execute one trade per check to avoid overloading
+      break;
+    }
   }
 
   async stop(): Promise<void> {
