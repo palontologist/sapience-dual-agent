@@ -664,5 +664,23 @@
     "pnl": 0.14000000000000004,
     "resolved": true,
     "resolutionDate": 1768335044040
+  },
+  {
+    "tradeId": "HYPE-USD-1768335516826",
+    "marketId": "HYPE-USD",
+    "question": "HYPE-USD SHORT @ $25.533",
+    "action": "sell",
+    "entryPrice": 25.53337262224528,
+    "exitPrice": 24.639704580466695,
+    "size": 0.176,
+    "confidence": 0.3,
+    "expectedReturn": 1.0350000000000001,
+    "riskScore": 0.7,
+    "timestamp": 1768335528744,
+    "reasoning": "Exit: take-profit after 0.2min",
+    "actualOutcome": true,
+    "pnl": 0.14000000000000015,
+    "resolved": true,
+    "resolutionDate": 1768335542508
   }
 ]

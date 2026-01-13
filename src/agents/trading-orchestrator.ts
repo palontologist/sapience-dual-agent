@@ -322,12 +322,28 @@ class AnalysisEngine extends EventEmitter {
 
   private async queueForAnalysis(snapshot: MarketSnapshot): Promise<void> {
     const symbol = snapshot.market.symbol;
+    const now = Date.now();
     
     // Check if we already have a valid signal
     const existing = this.signalQueue.get(symbol);
-    if (existing && existing.expiresAt > Date.now()) {
+    if (existing && existing.expiresAt > now) {
       // Update existing signal with new data
       existing.marketSnapshot = snapshot;
+      
+      // Check if direction should flip (significant change)
+      const priceChange = snapshot.market.priceChangePercent24h;
+      const shouldBeLong = priceChange > 1.5;
+      const shouldBeShort = priceChange < -1.5;
+      const currentIsLong = existing.action === 'LONG';
+      
+      // If direction should flip, generate new signal
+      if ((shouldBeLong && !currentIsLong) || (shouldBeShort && currentIsLong)) {
+        const signal = await this.generateSignal(snapshot);
+        if (signal) {
+          this.signalQueue.set(symbol, signal);
+          this.emit('newSignal', signal);
+        }
+      }
       return;
     }
     
@@ -352,9 +368,9 @@ class AnalysisEngine extends EventEmitter {
       };
     }).sort((a, b) => b.score - a.score);
     
-    // Analyze top 3 opportunities
-    for (const { snapshot } of scoredMarkets.slice(0, 3)) {
-      if (snapshot && Math.abs(snapshot.signals.composite.score) > 30) {
+    // Analyze top 5 opportunities to find more trades
+    for (const { snapshot } of scoredMarkets.slice(0, 5)) {
+      if (snapshot && Math.abs(snapshot.signals.composite.score) > 25) {
         await this.queueForAnalysis(snapshot);
       }
     }
@@ -1127,7 +1143,14 @@ export class TradingOrchestrator extends EventEmitter {
     
     const signals = this.analysisEngine.getActiveSignals();
     const now = Date.now();
-    const COOLDOWN_MS = 30000; // 30 second cooldown per symbol after a trade
+    const COOLDOWN_MS = 20000; // 20 second cooldown per symbol after a trade
+    
+    // Clean up old cooldowns (allow new signals for same symbol after cooldown)
+    for (const [symbol, lastTime] of this.lastTradeTime.entries()) {
+      if (now - lastTime > COOLDOWN_MS * 2) {
+        this.lastTradeTime.delete(symbol);
+      }
+    }
     
     for (const signal of signals) {
       const signalAge = now - signal.createdAt;
