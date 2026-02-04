@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from 'react'
 
+// Configuration constants
+const SIMILARITY_THRESHOLD = 0.3 // Minimum similarity score to consider a match
+const MIN_WORD_LENGTH = 3 // Minimum word length for similarity calculation
+
 interface SapienceCondition {
   id: string
   question: string
@@ -81,8 +85,8 @@ export default function MarketComparison() {
       } else {
         setError(sapienceData.error || domeData.error)
       }
-    } catch (err: any) {
-      setError(err.message)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'An unknown error occurred')
     } finally {
       setIsLoading(false)
     }
@@ -109,8 +113,7 @@ export default function MarketComparison() {
       }
       
       // Only include if similarity threshold is met
-      const threshold = 0.3
-      if (bestSimilarity < threshold) {
+      if (bestSimilarity < SIMILARITY_THRESHOLD) {
         bestMatch = null
         bestSimilarity = 0
       }
@@ -137,8 +140,8 @@ export default function MarketComparison() {
 
   const calculateSimilarity = (str1: string, str2: string): number => {
     // Simple word-based similarity calculation
-    const words1 = new Set(str1.split(/\s+/).filter(w => w.length > 3))
-    const words2 = new Set(str2.split(/\s+/).filter(w => w.length > 3))
+    const words1 = new Set(str1.split(/\s+/).filter(w => w.length > MIN_WORD_LENGTH))
+    const words2 = new Set(str2.split(/\s+/).filter(w => w.length > MIN_WORD_LENGTH))
     
     const intersection = new Set([...words1].filter(x => words2.has(x)))
     const union = new Set([...words1, ...words2])
