@@ -5,10 +5,11 @@ import { useRouter } from 'next/navigation'
 import ForecastingDashboard from '@/components/ForecastingDashboard'
 import AgentControls from '@/components/AgentControls'
 import MarketList from '@/components/MarketList'
+import MarketComparison from '@/components/MarketComparison'
 
 export default function Home() {
   const router = useRouter()
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'markets' | 'control'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'markets' | 'comparison' | 'control'>('comparison')
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-black">
@@ -44,6 +45,16 @@ export default function Home() {
         {/* Navigation Tabs */}
         <div className="flex gap-4 mb-8 border-b border-gray-700">
           <button
+            onClick={() => setActiveTab('comparison')}
+            className={`px-6 py-3 font-semibold transition-all ${
+              activeTab === 'comparison'
+                ? 'text-purple-400 border-b-2 border-purple-400'
+                : 'text-gray-400 hover:text-gray-300'
+            }`}
+          >
+            🔍 Market Analysis
+          </button>
+          <button
             onClick={() => setActiveTab('dashboard')}
             className={`px-6 py-3 font-semibold transition-all ${
               activeTab === 'dashboard'
@@ -77,6 +88,7 @@ export default function Home() {
 
         {/* Content */}
         <div className="space-y-8">
+          {activeTab === 'comparison' && <MarketComparison />}
           {activeTab === 'dashboard' && <ForecastingDashboard />}
           {activeTab === 'markets' && <MarketList />}
           {activeTab === 'control' && <AgentControls />}
