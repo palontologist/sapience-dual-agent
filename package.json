@@ -69,6 +69,7 @@
     "dotenv": "^16.4.7",
     "ethers": "^6.13.4",
     "express": "^4.21.0",
+    "graphql": "^16.12.0",
     "graphql-request": "^7.1.2",
     "groq-sdk": "^0.8.0",
     "next": "16.1.1",
