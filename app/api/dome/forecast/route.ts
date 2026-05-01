@@ -58,7 +58,7 @@ Rules:
 
     const completion = await groq.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
-      model: "moonshotai/kimi-k2-instruct-0905",
+      model: "llama-3.3-70b-versatile",
       temperature: 0.3,
       max_tokens: 1000,
     });

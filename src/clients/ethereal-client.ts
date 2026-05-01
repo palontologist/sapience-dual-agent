@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from "axios";
 
 export interface EtherealMarket {
   symbol: string;
@@ -25,15 +25,15 @@ export interface EtherealOrderBook {
 export interface EtherealTrade {
   id: string;
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: "BUY" | "SELL";
   price: number;
   size: number;
   timestamp: number;
 }
 
 export class EtherealClient {
-  private baseUrl: string = 'https://api.ethereal.exchange';
-  private wsUrl: string = 'wss://api.ethereal.exchange/ws';
+  private baseUrl: string = "https://api.ethereal.exchange";
+  private wsUrl: string = "wss://api.ethereal.exchange/ws";
 
   constructor(apiKey?: string) {
     if (apiKey) {
@@ -52,8 +52,8 @@ export class EtherealClient {
 
       return response.data.markets || [];
     } catch (error: any) {
-      console.error('Error fetching Ethereal markets:', error.message);
-      
+      console.error("Error fetching Ethereal markets:", error.message);
+
       // Return mock data based on the provided market list
       return this.getMockMarkets();
     }
@@ -64,18 +64,24 @@ export class EtherealClient {
    */
   async getMarket(symbol: string): Promise<EtherealMarket | null> {
     const markets = await this.getMarkets();
-    return markets.find(m => m.symbol === symbol) || null;
+    return markets.find((m) => m.symbol === symbol) || null;
   }
 
   /**
    * Get order book for a symbol
    */
-  async getOrderBook(symbol: string, depth: number = 20): Promise<EtherealOrderBook> {
+  async getOrderBook(
+    symbol: string,
+    depth: number = 20,
+  ): Promise<EtherealOrderBook> {
     try {
-      const response = await axios.get(`${this.baseUrl}/v1/orderbook/${symbol}`, {
-        params: { depth },
-        timeout: 5000,
-      });
+      const response = await axios.get(
+        `${this.baseUrl}/v1/orderbook/${symbol}`,
+        {
+          params: { depth },
+          timeout: 5000,
+        },
+      );
 
       return response.data;
     } catch (error) {
@@ -86,7 +92,10 @@ export class EtherealClient {
   /**
    * Get recent trades
    */
-  async getRecentTrades(symbol: string, limit: number = 100): Promise<EtherealTrade[]> {
+  async getRecentTrades(
+    symbol: string,
+    limit: number = 100,
+  ): Promise<EtherealTrade[]> {
     try {
       const response = await axios.get(`${this.baseUrl}/v1/trades/${symbol}`, {
         params: { limit },
@@ -104,19 +113,19 @@ export class EtherealClient {
    */
   private getMockMarkets(): EtherealMarket[] {
     // Add slight random variation to simulate market movement
-    const vary = (base: number, pct: number = 0.005) => 
+    const vary = (base: number, pct: number = 0.005) =>
       base * (1 + (Math.random() - 0.5) * pct * 2);
-    
+
     const varyPct = (base: number, range: number = 0.5) =>
       base + (Math.random() - 0.5) * range * 2;
-    
+
     return [
       {
-        symbol: 'BTC-USD',
-        baseAsset: 'BTC',
-        quoteAsset: 'USD',
+        symbol: "BTC-USD",
+        baseAsset: "BTC",
+        quoteAsset: "USD",
         leverage: 20,
-        lastPrice: vary(89706),
+        lastPrice: vary(90074),
         priceChange24h: vary(-432.89, 0.1),
         priceChangePercent24h: varyPct(-0.48, 0.3),
         volume24h: vary(53940000, 0.1),
@@ -124,21 +133,21 @@ export class EtherealClient {
         openInterest: 53840000,
       },
       {
-        symbol: 'ETH-USD',
-        baseAsset: 'ETH',
-        quoteAsset: 'USD',
+        symbol: "ETH-USD",
+        baseAsset: "ETH",
+        quoteAsset: "USD",
         leverage: 20,
         lastPrice: vary(3070.2),
-        priceChange24h: vary(-44.20, 0.1),
+        priceChange24h: vary(-44.2, 0.1),
         priceChangePercent24h: varyPct(-1.42, 0.4),
         volume24h: vary(34090000, 0.1),
         fundingRate: 0.000017,
         openInterest: 34730000,
       },
       {
-        symbol: 'ENA-USD',
-        baseAsset: 'ENA',
-        quoteAsset: 'USD',
+        symbol: "ENA-USD",
+        baseAsset: "ENA",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(0.22881),
         priceChange24h: vary(-0.00386, 0.1),
@@ -148,9 +157,9 @@ export class EtherealClient {
         openInterest: 784510,
       },
       {
-        symbol: 'SOL-USD',
-        baseAsset: 'SOL',
-        quoteAsset: 'USD',
+        symbol: "SOL-USD",
+        baseAsset: "SOL",
+        quoteAsset: "USD",
         leverage: 10,
         lastPrice: vary(137.08),
         priceChange24h: vary(1.93, 0.1),
@@ -160,21 +169,21 @@ export class EtherealClient {
         openInterest: 3940000,
       },
       {
-        symbol: 'HYPE-USD',
-        baseAsset: 'HYPE',
-        quoteAsset: 'USD',
+        symbol: "HYPE-USD",
+        baseAsset: "HYPE",
+        quoteAsset: "USD",
         leverage: 10,
-        lastPrice: vary(25.520),
-        priceChange24h: vary(-0.90, 0.1),
+        lastPrice: vary(25.52),
+        priceChange24h: vary(-0.9, 0.1),
         priceChangePercent24h: varyPct(-3.41, 0.4),
         volume24h: vary(2700000, 0.1),
         fundingRate: 0.0005,
         openInterest: 2330000,
       },
       {
-        symbol: 'ZEC-USD',
-        baseAsset: 'ZEC',
-        quoteAsset: 'USD',
+        symbol: "ZEC-USD",
+        baseAsset: "ZEC",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(432.23),
         priceChange24h: vary(10.05, 0.1),
@@ -184,9 +193,9 @@ export class EtherealClient {
         openInterest: 664740,
       },
       {
-        symbol: 'SUI-USD',
-        baseAsset: 'SUI',
-        quoteAsset: 'USD',
+        symbol: "SUI-USD",
+        baseAsset: "SUI",
+        quoteAsset: "USD",
         leverage: 10,
         lastPrice: vary(1.7726),
         priceChange24h: vary(-0.0348, 0.1),
@@ -196,9 +205,9 @@ export class EtherealClient {
         openInterest: 501150,
       },
       {
-        symbol: 'XRP-USD',
-        baseAsset: 'XRP',
-        quoteAsset: 'USD',
+        symbol: "XRP-USD",
+        baseAsset: "XRP",
+        quoteAsset: "USD",
         leverage: 10,
         lastPrice: vary(2.0756),
         priceChange24h: vary(-0.0356, 0.1),
@@ -208,9 +217,9 @@ export class EtherealClient {
         openInterest: 559250,
       },
       {
-        symbol: 'FARTCOIN-USD',
-        baseAsset: 'FARTCOIN',
-        quoteAsset: 'USD',
+        symbol: "FARTCOIN-USD",
+        baseAsset: "FARTCOIN",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(0.39321),
         priceChange24h: vary(0.00501, 0.1),
@@ -220,9 +229,9 @@ export class EtherealClient {
         openInterest: 532450,
       },
       {
-        symbol: 'PUMP-USD',
-        baseAsset: 'PUMP',
-        quoteAsset: 'USD',
+        symbol: "PUMP-USD",
+        baseAsset: "PUMP",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(0.0021274),
         priceChange24h: vary(-0.0000775, 0.1),
@@ -232,9 +241,9 @@ export class EtherealClient {
         openInterest: 604480,
       },
       {
-        symbol: 'MON-USD',
-        baseAsset: 'MON',
-        quoteAsset: 'USD',
+        symbol: "MON-USD",
+        baseAsset: "MON",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(0.026617),
         priceChange24h: vary(0.000114, 0.1),
@@ -244,9 +253,9 @@ export class EtherealClient {
         openInterest: 672290,
       },
       {
-        symbol: 'AAVE-USD',
-        baseAsset: 'AAVE',
-        quoteAsset: 'USD',
+        symbol: "AAVE-USD",
+        baseAsset: "AAVE",
+        quoteAsset: "USD",
         leverage: 5,
         lastPrice: vary(162.83),
         priceChange24h: vary(-1.79, 0.1),
@@ -265,7 +274,7 @@ export class EtherealClient {
     const volumeScore = Math.min(market.volume24h / 50000000, 1) * 40;
     const oiScore = Math.min(market.openInterest / 50000000, 1) * 40;
     const fundingScore = Math.abs(market.fundingRate) < 0.001 ? 20 : 10;
-    
+
     return volumeScore + oiScore + fundingScore;
   }
 }

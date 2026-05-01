@@ -1,15 +1,17 @@
-'use client'
+"use client";
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import ForecastingDashboard from '@/components/ForecastingDashboard'
-import AgentControls from '@/components/AgentControls'
-import MarketList from '@/components/MarketList'
-import MarketComparison from '@/components/MarketComparison'
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import ForecastingDashboard from "@/components/ForecastingDashboard";
+import AgentControls from "@/components/AgentControls";
+import MarketList from "@/components/MarketList";
+import MarketComparison from "@/components/MarketComparison";
 
 export default function Home() {
-  const router = useRouter()
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'markets' | 'comparison' | 'control'>('comparison')
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState<
+    "dashboard" | "markets" | "comparison" | "control"
+  >("comparison");
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-black">
@@ -27,13 +29,19 @@ export default function Home() {
             </div>
             <div className="flex gap-3">
               <button
-                onClick={() => router.push('/trade')}
+                onClick={() => router.push("/opportunities")}
+                className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-lg font-semibold transition-all transform hover:scale-105"
+              >
+                🎯 Best Opportunities
+              </button>
+              <button
+                onClick={() => router.push("/trade")}
                 className="px-6 py-3 bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all transform hover:scale-105"
               >
                 💰 Trading Agent
               </button>
               <button
-                onClick={() => router.push('/dome')}
+                onClick={() => router.push("/dome")}
                 className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg font-semibold transition-all transform hover:scale-105"
               >
                 🔮 Dome Markets
@@ -45,41 +53,41 @@ export default function Home() {
         {/* Navigation Tabs */}
         <div className="flex gap-4 mb-8 border-b border-gray-700">
           <button
-            onClick={() => setActiveTab('comparison')}
+            onClick={() => setActiveTab("comparison")}
             className={`px-6 py-3 font-semibold transition-all ${
-              activeTab === 'comparison'
-                ? 'text-purple-400 border-b-2 border-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "comparison"
+                ? "text-purple-400 border-b-2 border-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             🔍 Market Analysis
           </button>
           <button
-            onClick={() => setActiveTab('dashboard')}
+            onClick={() => setActiveTab("dashboard")}
             className={`px-6 py-3 font-semibold transition-all ${
-              activeTab === 'dashboard'
-                ? 'text-purple-400 border-b-2 border-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "dashboard"
+                ? "text-purple-400 border-b-2 border-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             📊 Dashboard
           </button>
           <button
-            onClick={() => setActiveTab('markets')}
+            onClick={() => setActiveTab("markets")}
             className={`px-6 py-3 font-semibold transition-all ${
-              activeTab === 'markets'
-                ? 'text-purple-400 border-b-2 border-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "markets"
+                ? "text-purple-400 border-b-2 border-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             🎲 Sapience Markets
           </button>
           <button
-            onClick={() => setActiveTab('control')}
+            onClick={() => setActiveTab("control")}
             className={`px-6 py-3 font-semibold transition-all ${
-              activeTab === 'control'
-                ? 'text-purple-400 border-b-2 border-purple-400'
-                : 'text-gray-400 hover:text-gray-300'
+              activeTab === "control"
+                ? "text-purple-400 border-b-2 border-purple-400"
+                : "text-gray-400 hover:text-gray-300"
             }`}
           >
             ⚙️ Controls
@@ -88,12 +96,12 @@ export default function Home() {
 
         {/* Content */}
         <div className="space-y-8">
-          {activeTab === 'comparison' && <MarketComparison />}
-          {activeTab === 'dashboard' && <ForecastingDashboard />}
-          {activeTab === 'markets' && <MarketList />}
-          {activeTab === 'control' && <AgentControls />}
+          {activeTab === "comparison" && <MarketComparison />}
+          {activeTab === "dashboard" && <ForecastingDashboard />}
+          {activeTab === "markets" && <MarketList />}
+          {activeTab === "control" && <AgentControls />}
         </div>
       </div>
     </main>
-  )
+  );
 }

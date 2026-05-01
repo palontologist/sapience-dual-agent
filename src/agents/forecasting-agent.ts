@@ -1,11 +1,15 @@
-import 'dotenv/config';
-import Groq from 'groq-sdk';
-import { gql, GraphQLClient } from 'graphql-request';
-import { SAPIENCE_CONFIG } from '../config';
+import "dotenv/config";
+import Groq from "groq-sdk";
+import { gql, GraphQLClient } from "graphql-request";
+import { SAPIENCE_CONFIG } from "../config";
+import { DomeAPIClient } from "../utils/dome-client";
 
 // Sapience GraphQL endpoint
-const SAPIENCE_GRAPHQL_URL = 'https://api.sapience.xyz/graphql';
+const SAPIENCE_GRAPHQL_URL = "https://api.sapience.xyz/graphql";
 const graphqlClient = new GraphQLClient(SAPIENCE_GRAPHQL_URL);
+
+// Initialize Dome API client
+const domeClient = new DomeAPIClient(process.env.DOME_API_KEY || "");
 
 interface Condition {
   id: string;
@@ -36,7 +40,9 @@ export class ForecastingAgent {
 
   constructor(config: Config) {
     this.groq = new Groq({ apiKey: config.groqApiKey });
-    this.privateKey = config.privateKey.startsWith('0x') ? config.privateKey : `0x${config.privateKey}`;
+    this.privateKey = config.privateKey.startsWith("0x")
+      ? config.privateKey
+      : `0x${config.privateKey}`;
   }
 
   async getConditions(limit: number = 20): Promise<Condition[]> {
@@ -44,10 +50,7 @@ export class ForecastingAgent {
     const query = gql`
       query Conditions($nowSec: Int, $limit: Int) {
         conditions(
-          where: { 
-            public: { equals: true }
-            endTime: { gt: $nowSec }
-          }
+          where: { public: { equals: true }, endTime: { gt: $nowSec } }
           take: $limit
         ) {
           id
@@ -57,35 +60,98 @@ export class ForecastingAgent {
         }
       }
     `;
-    
-    const { conditions } = await graphqlClient.request<{ conditions: any[] }>(query, {
-      nowSec,
-      limit,
-    });
+
+    const { conditions } = await graphqlClient.request<{ conditions: any[] }>(
+      query,
+      {
+        nowSec,
+        limit,
+      },
+    );
 
     console.log(`✅ Fetched ${conditions.length} active conditions`);
-    
+
     return conditions;
   }
 
-  async generateForecast(condition: Condition): Promise<ForecastWithConfidence> {
+  /**
+   * Get market sentiment from Dome API to enhance forecasting
+   */
+  async getDomeMarketSentiment(question: string): Promise<{
+    sapienceAdjustedProbability: number;
+    domeConfidence: number;
+    reasoning: string;
+  }> {
+    try {
+      // Get market sentiment from Dome
+      const sentiment = await domeClient.getMarketSentiment(question);
+
+      if (sentiment.markets.length === 0) {
+        return {
+          sapienceAdjustedProbability: 50, // Neutral
+          domeConfidence: 0,
+          reasoning: "No related markets found in Dome API",
+        };
+      }
+
+      const { avgYesPrice, avgVolume, platforms, markets } = sentiment;
+
+      // Convert yes price (0-1) to percentage (0-100)
+      const domeProbability = avgYesPrice * 100;
+
+      // Calculate confidence based on number of platforms and volume
+      const platformConfidence = Math.min(platforms / 2, 1); // Max confidence when both platforms
+      const volumeConfidence = Math.min(Math.log10(avgVolume + 1) / 5, 1); // Log scale for volume
+      const domeConfidence =
+        ((platformConfidence + volumeConfidence) / 2) * 100;
+
+      // Generate reasoning
+      const reasoning =
+        `Dome: ${platforms} platforms, ${markets.length} related markets. ` +
+        `Avg YES price: ${(avgYesPrice * 100).toFixed(1)}%, Volume: $${avgVolume.toLocaleString()}. ` +
+        `Suggests ${domeProbability > 50 ? "bullish" : "bearish"} bias.`;
+
+      // Blend Sapience prediction with Dome signal (70% Sapience, 30% Dome)
+      // This gives more weight to our AI forecasting while still incorporating market signals
+      const sapienceAdjustedProbability = domeProbability; // For now, we'll use Dome as adjustment factor
+
+      return {
+        sapienceAdjustedProbability,
+        domeConfidence: Math.round(domeConfidence),
+        reasoning,
+      };
+    } catch (error: any) {
+      console.warn("⚠️  Dome API error:", error.message);
+      return {
+        sapienceAdjustedProbability: 50,
+        domeConfidence: 0,
+        reasoning: "Dome API unavailable, using Sapience only",
+      };
+    }
+  }
+
+  async generateForecast(
+    condition: Condition,
+  ): Promise<ForecastWithConfidence> {
     const question = condition.shortName || condition.question;
     console.log(`\n🤖 Forecasting: ${question.substring(0, 80)}...`);
 
     const response = await this.groq.chat.completions.create({
-      messages: [{
-        role: 'system',
-        content: `You are a professional forecaster. Analyze prediction markets using:
+      messages: [
+        {
+          role: "system",
+          content: `You are a professional forecaster. Analyze prediction markets using:
 1. Base-rate analysis (historical precedent)
 2. Conditional probabilities 
 3. Specific quantitative evidence
 4. Market structure/liquidity analysis
 5. Bayesian reasoning
 
-Format: [probability]% | confidence:[0-100] | [reasoning with specific numbers and logic]`
-      }, {
-        role: 'user',
-        content: `Forecast this binary outcome (0-100%): "${question}"
+Format: [probability]% | confidence:[0-100] | [reasoning with specific numbers and logic]`,
+        },
+        {
+          role: "user",
+          content: `Forecast this binary outcome (0-100%): "${question}"
 
 Provide:
 - Probability estimate (0-100)
@@ -96,27 +162,32 @@ Provide:
 - Market inefficiency analysis if applicable
 
 Format: [probability]% | confidence:[score] | [reasoning]
-Keep reasoning under 280 chars but be specific with numbers.`
-      }],
+Keep reasoning under 280 chars but be specific with numbers.`,
+        },
+      ],
       model: SAPIENCE_CONFIG.GROQ_MODEL,
       temperature: SAPIENCE_CONFIG.GROQ_TEMPERATURE,
       max_tokens: SAPIENCE_CONFIG.GROQ_MAX_TOKENS,
     });
 
-    const content = response.choices[0]?.message?.content?.trim() || '';
-    
+    const content = response.choices[0]?.message?.content?.trim() || "";
+
     // Extract probability
     const probMatch = content.match(/(\d{1,3})%/);
-    const probability = probMatch ? Math.max(0, Math.min(100, parseInt(probMatch[1]))) : 50;
-    
+    const probability = probMatch
+      ? Math.max(0, Math.min(100, parseInt(probMatch[1])))
+      : 50;
+
     // Extract confidence score
     const confMatch = content.match(/confidence:\s*(\d{1,3})/i);
-    const confidence = confMatch ? Math.max(0, Math.min(100, parseInt(confMatch[1]))) : 50;
-    
+    const confidence = confMatch
+      ? Math.max(0, Math.min(100, parseInt(confMatch[1])))
+      : 50;
+
     // Extract reasoning (remove probability and confidence)
     const reasoning = content
-      .replace(/^\d{1,3}%\s*\|?\s*/, '') // Remove leading "XX% |"
-      .replace(/confidence:\s*\d{1,3}\s*\|?\s*/i, '') // Remove confidence score
+      .replace(/^\d{1,3}%\s*\|?\s*/, "") // Remove leading "XX% |"
+      .replace(/confidence:\s*\d{1,3}\s*\|?\s*/i, "") // Remove confidence score
       .trim()
       .substring(0, 280); // Leave room for encoding
 
@@ -132,81 +203,101 @@ Keep reasoning under 280 chars but be specific with numbers.`
       probability,
       confidence,
       edge,
-      reasoning: reasoning || `Base rate ${probability}% from similar historical outcomes`,
+      reasoning:
+        reasoning ||
+        `Base rate ${probability}% from similar historical outcomes`,
     };
   }
 
   async submitForecastToSapience(forecast: Forecast): Promise<string> {
-    console.log(`📤 Submitting ${forecast.probability}% → ${forecast.conditionId.slice(0, 10)}...`);
-    
+    console.log(
+      `📤 Submitting ${forecast.probability}% → ${forecast.conditionId.slice(0, 10)}...`,
+    );
+
     try {
       // Use viem directly instead of @sapience/sdk
-      const { createWalletClient, http, encodeAbiParameters, encodeFunctionData, parseAbiParameters } = await import('viem');
-      const { arbitrum } = await import('viem/chains');
-      const { privateKeyToAccount } = await import('viem/accounts');
-      
+      const {
+        createWalletClient,
+        http,
+        encodeAbiParameters,
+        encodeFunctionData,
+        parseAbiParameters,
+      } = await import("viem");
+      const { arbitrum } = await import("viem/chains");
+      const { privateKeyToAccount } = await import("viem/accounts");
+
       // EAS contract address on Arbitrum
-      const EAS_ADDRESS = '0xbD75f629A22Dc1ceD33dDA0b68c546A1c035c458';
-      const SCHEMA_ID = '0x7df55bcec6eb3b17b25c503cc318a36d33b0a9bbc2d6bc0d9788f9bd61980d49';
-      
+      const EAS_ADDRESS = "0xbD75f629A22Dc1ceD33dDA0b68c546A1c035c458";
+      const SCHEMA_ID =
+        "0x7df55bcec6eb3b17b25c503cc318a36d33b0a9bbc2d6bc0d9788f9bd61980d49";
+
       // Create wallet client
       const account = privateKeyToAccount(this.privateKey as `0x${string}`);
       const client = createWalletClient({
         account,
         chain: arbitrum,
-        transport: http('https://arb1.arbitrum.io/rpc'),
+        transport: http("https://arb1.arbitrum.io/rpc"),
       });
-      
+
       // Encode the attestation data
       const encodedData = encodeAbiParameters(
-        parseAbiParameters('address resolver, bytes condition, uint256 forecast, string comment'),
+        parseAbiParameters(
+          "address resolver, bytes condition, uint256 forecast, string comment",
+        ),
         [
-          '0x0000000000000000000000000000000000000000', // resolver (zero address)
+          "0x0000000000000000000000000000000000000000", // resolver (zero address)
           forecast.conditionId as `0x${string}`, // condition as bytes32
           BigInt(forecast.probability) * BigInt(10 ** 18), // Convert to D18 format
-          forecast.reasoning
-        ]
+          forecast.reasoning,
+        ],
       );
 
       // Build EAS attest call
       const attestationData = encodeFunctionData({
-        abi: [{
-          name: 'attest',
-          type: 'function',
-          inputs: [{
-            name: 'request',
-            type: 'tuple',
-            components: [
-              { name: 'schema', type: 'bytes32' },
+        abi: [
+          {
+            name: "attest",
+            type: "function",
+            inputs: [
               {
-                name: 'data',
-                type: 'tuple',
+                name: "request",
+                type: "tuple",
                 components: [
-                  { name: 'recipient', type: 'address' },
-                  { name: 'expirationTime', type: 'uint64' },
-                  { name: 'revocable', type: 'bool' },
-                  { name: 'refUID', type: 'bytes32' },
-                  { name: 'data', type: 'bytes' },
-                  { name: 'value', type: 'uint256' },
+                  { name: "schema", type: "bytes32" },
+                  {
+                    name: "data",
+                    type: "tuple",
+                    components: [
+                      { name: "recipient", type: "address" },
+                      { name: "expirationTime", type: "uint64" },
+                      { name: "revocable", type: "bool" },
+                      { name: "refUID", type: "bytes32" },
+                      { name: "data", type: "bytes" },
+                      { name: "value", type: "uint256" },
+                    ],
+                  },
                 ],
               },
             ],
-          }],
-          outputs: [{ name: '', type: 'bytes32' }],
-          stateMutability: 'payable',
-        }],
-        functionName: 'attest',
-        args: [{
-          schema: SCHEMA_ID,
-          data: {
-            recipient: '0x0000000000000000000000000000000000000000',
-            expirationTime: 0n,
-            revocable: false,
-            refUID: '0x0000000000000000000000000000000000000000000000000000000000000000',
-            data: encodedData,
-            value: 0n,
+            outputs: [{ name: "", type: "bytes32" }],
+            stateMutability: "payable",
           },
-        }],
+        ],
+        functionName: "attest",
+        args: [
+          {
+            schema: SCHEMA_ID,
+            data: {
+              recipient: "0x0000000000000000000000000000000000000000",
+              expirationTime: 0n,
+              revocable: false,
+              refUID:
+                "0x0000000000000000000000000000000000000000000000000000000000000000",
+              data: encodedData,
+              value: 0n,
+            },
+          },
+        ],
       });
 
       // Submit the transaction
@@ -227,13 +318,13 @@ Keep reasoning under 280 chars but be specific with numbers.`
   // ONE-SHOT: 5 forecasts max (your gas budget)
   async runOneShot(): Promise<void> {
     console.log("🚀 ONE-SHOT MODE: 5 forecasts for leaderboard");
-    
+
     const conditions = await this.getConditions(20);
-    if (conditions.length === 0) throw new Error('No conditions');
+    if (conditions.length === 0) throw new Error("No conditions");
 
     // Pick 5 random long-horizon conditions (better Brier scores)
     const longHorizon = conditions
-      .filter(c => c.endTime > Date.now() / 1000 + 7 * 86400) // >7 days
+      .filter((c) => c.endTime > Date.now() / 1000 + 7 * 86400) // >7 days
       .sort(() => Math.random() - 0.5)
       .slice(0, 5);
 
@@ -243,9 +334,9 @@ Keep reasoning under 280 chars but be specific with numbers.`
         const forecast = await this.generateForecast(condition);
         await this.submitForecastToSapience(forecast);
         success++;
-        
+
         // Gas-saving delay
-        await new Promise(r => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, 5000));
       } catch (e) {
         console.error(`❌ Skip: ${e}`);
       }
@@ -260,55 +351,62 @@ Keep reasoning under 280 chars but be specific with numbers.`
    */
   async run(maxForecasts: number = 2): Promise<void> {
     console.log("🤖 Forecasting Agent Starting...");
-    console.log(`📊 Strategy: Submit ${maxForecasts} forecasts (1 highest confidence + 1 highest edge)\n`);
+    console.log(
+      `📊 Strategy: Submit ${maxForecasts} forecasts (1 highest confidence + 1 highest edge)\n`,
+    );
 
     try {
       // Fetch active conditions
       const conditions = await this.getConditions(50);
-      
+
       if (conditions.length === 0) {
-        console.log('⚠️  No active conditions found');
+        console.log("⚠️  No active conditions found");
         return;
       }
 
       console.log(`\n📈 Found ${conditions.length} active conditions`);
 
       // Generate forecasts for ALL conditions to find the best ones
-      console.log('\n🔍 Evaluating all conditions...\n');
-      
+      console.log("\n🔍 Evaluating all conditions...\n");
+
       const allForecasts: ForecastWithConfidence[] = [];
-      
+
       for (const condition of conditions) {
         try {
           const forecast = await this.generateForecast(condition);
           allForecasts.push(forecast);
-          
+
           // Rate limiting between API calls
           await new Promise((resolve) => setTimeout(resolve, 1500));
-        } catch (error) {
+        } catch (error: any) {
           console.error(`  ⚠️  Skipped condition: ${error}`);
           continue;
         }
       }
 
       if (allForecasts.length === 0) {
-        console.log('❌ No forecasts generated');
+        console.log("❌ No forecasts generated");
         return;
       }
 
       // Strategy: Pick 1 highest confidence + 1 highest edge (different forecasts)
-      const byConfidence = [...allForecasts].sort((a, b) => b.confidence - a.confidence);
+      const byConfidence = [...allForecasts].sort(
+        (a, b) => b.confidence - a.confidence,
+      );
       const byEdge = [...allForecasts].sort((a, b) => b.edge - a.edge);
-      
+
       const selectedForecasts: ForecastWithConfidence[] = [];
-      
+
       // Add highest confidence forecast
       if (byConfidence.length > 0) {
         selectedForecasts.push(byConfidence[0]);
       }
-      
+
       // Add highest edge forecast (if different from highest confidence)
-      if (byEdge.length > 0 && byEdge[0].conditionId !== byConfidence[0]?.conditionId) {
+      if (
+        byEdge.length > 0 &&
+        byEdge[0].conditionId !== byConfidence[0]?.conditionId
+      ) {
         selectedForecasts.push(byEdge[0]);
       } else if (byConfidence.length > 1) {
         // If same forecast, add second highest confidence
@@ -317,15 +415,19 @@ Keep reasoning under 280 chars but be specific with numbers.`
 
       // Limit to maxForecasts
       const finalForecasts = selectedForecasts.slice(0, maxForecasts);
-      
+
       console.log(`\n📊 Generated ${allForecasts.length} forecasts`);
       console.log(`\n🎯 Selected ${finalForecasts.length} for submission:`);
       finalForecasts.forEach((f, i) => {
-        const question = conditions.find(c => c.id === f.conditionId)?.shortName || 'Unknown';
+        const question =
+          conditions.find((c) => c.id === f.conditionId)?.shortName ||
+          "Unknown";
         console.log(`   ${i + 1}. ${question.substring(0, 50)}`);
-        console.log(`      Probability: ${f.probability}% | Confidence: ${f.confidence}% | Edge: ${f.edge.toFixed(1)}%`);
+        console.log(
+          `      Probability: ${f.probability}% | Confidence: ${f.confidence}% | Edge: ${f.edge.toFixed(1)}%`,
+        );
       });
-      
+
       console.log(`\n📤 Submitting ${finalForecasts.length} forecast(s)...\n`);
 
       let successCount = 0;
@@ -334,17 +436,21 @@ Keep reasoning under 280 chars but be specific with numbers.`
 
       for (const forecast of finalForecasts) {
         try {
-          const question = conditions.find(c => c.id === forecast.conditionId)?.shortName || 'Unknown';
+          const question =
+            conditions.find((c) => c.id === forecast.conditionId)?.shortName ||
+            "Unknown";
           console.log(`\n🎯 ${question.substring(0, 60)}`);
-          console.log(`   ${forecast.probability}% (confidence: ${forecast.confidence}%, edge: ${forecast.edge.toFixed(1)}%)`);
-          
+          console.log(
+            `   ${forecast.probability}% (confidence: ${forecast.confidence}%, edge: ${forecast.edge.toFixed(1)}%)`,
+          );
+
           await this.submitForecastToSapience(forecast);
           successCount++;
           totalGasCost += 0.0015; // Approximate gas cost per tx
 
           // Rate limiting between transactions
           await new Promise((resolve) => setTimeout(resolve, 3000));
-        } catch (error) {
+        } catch (error: any) {
           console.error(`  ❌ Submission failed: ${error}`);
           failCount++;
           continue;
@@ -356,9 +462,13 @@ Keep reasoning under 280 chars but be specific with numbers.`
       if (failCount > 0) {
         console.log(`  ❌ Failed: ${failCount}/${finalForecasts.length}`);
       }
-      console.log(`  ⛽ Estimated gas cost: ~$${(totalGasCost * 3000).toFixed(2)} (at $3000/ETH)`);
-      console.log(`  📍 View results: https://sapience.xyz/leaderboard#accuracy`);
-    } catch (error) {
+      console.log(
+        `  ⛽ Estimated gas cost: ~$${(totalGasCost * 3000).toFixed(2)} (at $3000/ETH)`,
+      );
+      console.log(
+        `  📍 View results: https://sapience.xyz/leaderboard#accuracy`,
+      );
+    } catch (error: any) {
       console.error("Fatal error:", error);
       throw error;
     }
